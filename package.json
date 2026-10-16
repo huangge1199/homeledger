@@ -5,8 +5,8 @@
   "description": "家账簿 HomeLedger —— 自托管家庭记账系统：全类型记账 + AI 截图/文本自动记账 + 开放 API，纯后端 SSR，数据自持于 SQLite",
   "main": "server.js",
   "scripts": {
-    "start": "node --no-warnings server.js",
-    "dev": "node --no-warnings --watch server.js"
+    "start": "node --no-warnings --env-file=.env server.js",
+    "dev": "node --no-warnings --env-file=.env --watch server.js"
   },
   "engines": {
     "node": ">=22.5.0"
