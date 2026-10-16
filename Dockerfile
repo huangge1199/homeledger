@@ -1,6 +1,22 @@
+# ==============================================================
+#  家账簿 HomeLedger —— 多阶段 Dockerfile
+#  stage1: 构建前端 web/dist
+#  stage2: 运行时镜像，仅含后端 + 构建产物
+# ==============================================================
+
+# ---------- 前端构建 ----------
+FROM node:22-slim AS web-builder
+WORKDIR /build
+
+COPY web/package.json web/package-lock.json* ./
+RUN if [ -f package-lock.json ]; then npm ci; else npm install; fi
+
+COPY web/ ./
+RUN npm run build
+
+# ---------- 运行时 ----------
 FROM node:22-slim
 
-# 时区可被环境变量覆盖
 ENV TZ=Asia/Shanghai \
     NODE_ENV=production \
     PORT=5111 \
@@ -8,19 +24,23 @@ ENV TZ=Asia/Shanghai \
 
 WORKDIR /app
 
-# slim 基础镜像不含 tzdata，TZ=Asia/Shanghai 会被静默回退 UTC（记账日期错天），必须显式安装
-RUN apt-get update && apt-get install -y --no-install-recommends tzdata     && rm -rf /var/lib/apt/lists/*
+# slim 基础镜像不含 tzdata，必须显式安装，否则 TZ=Asia/Shanghai 会被静默回退 UTC
+RUN apt-get update && apt-get install -y --no-install-recommends tzdata \
+    && rm -rf /var/lib/apt/lists/*
 
-# 先装依赖，利用镜像层缓存；lockfile 一并拷入 + npm ci，保证依赖版本可复现
+# 后端依赖
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --no-audit --no-fund
 
-# 再拷贝源码（--chown 一步到位，避免事后 chown -R 把整层应用文件复制一遍）
-COPY --chown=node:node . .
+# 拷贝后端源码
+COPY --chown=node:node server.js ./
+COPY --chown=node:node src ./src
+COPY --chown=node:node public ./public
 
-# 数据卷：所有账本数据都在这里，备份=拷走这一个目录
-# 注意：chown 只对具名卷/镜像内目录生效；bind mount（./data:/data）的属主沿用宿主机，
-#       NAS 上需 chown 1000:1000 ./data 或在 compose 里加 user
+# 拷贝前端构建产物
+COPY --from=web-builder --chown=node:node /build/dist ./web/dist
+
+# 数据卷
 RUN mkdir -p /data && chown -R node:node /data
 VOLUME ["/data"]
 

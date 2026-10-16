@@ -1,0 +1,136 @@
+/**
+ * 会话状态：用户、主题、账本上下文、AI 状态
+ * 启动时调 /api/v1/session 拉取，401 自动由 axios 拦截器跳登录
+ */
+import { defineStore } from 'pinia'
+
+export interface SessionUser {
+  id: number
+  username: string
+  displayName: string
+  email?: string | null
+  avatarColor?: string
+  avatarUrl?: string
+  avatarVer?: number | null
+  isAdmin: boolean
+  theme: 'light' | 'dark'
+}
+
+export interface Ledger {
+  id: number
+  name: string
+  icon: string
+  kind: 'personal' | 'family' | 'business' | 'travel' | 'project'
+  role: 'owner' | 'admin' | 'member' | 'viewer'
+  isArchived: boolean
+}
+
+interface SessionState {
+  loaded: boolean
+  loading: boolean
+  user: SessionUser | null
+  ledgers: Ledger[]
+  currentLedger: Ledger | null
+  csrf: string
+  aiUsable: boolean
+  needsSetup: boolean
+  siteName: string
+  baseCurrency: string
+  // 当前主题（独立于 user.theme；切换立刻生效 + 写回 server）
+  theme: 'light' | 'dark'
+}
+
+export const useSessionStore = defineStore('session', {
+  state: (): SessionState => ({
+    loaded: false,
+    loading: false,
+    user: null,
+    ledgers: [],
+    currentLedger: null,
+    csrf: '',
+    aiUsable: false,
+    needsSetup: false,
+    siteName: '家账簿',
+    baseCurrency: 'CNY',
+    theme: (localStorage.getItem('hl.theme') as 'light' | 'dark') || 'light',
+  }),
+  getters: {
+    isAuthed: (s) => !!s.user,
+    canWrite: (s) =>
+      !!s.currentLedger && !s.currentLedger.isArchived &&
+      ['owner', 'admin', 'member'].includes(s.currentLedger.role),
+    canManage: (s) =>
+      !!s.currentLedger && !s.currentLedger.isArchived &&
+      ['owner', 'admin'].includes(s.currentLedger.role),
+  },
+  actions: {
+    setTheme(theme: 'light' | 'dark') {
+      this.theme = theme
+      document.documentElement.setAttribute('data-theme', theme)
+      localStorage.setItem('hl.theme', theme)
+    },
+    toggleTheme() {
+      this.setTheme(this.theme === 'dark' ? 'light' : 'dark')
+    },
+    /** 从 /api/v1/session 拉一次；401 由拦截器处理 */
+    async refresh() {
+      this.loading = true
+      try {
+        const { api } = await import('@/api/client')
+        const { data } = await api.get<{
+          ok: boolean
+          data: {
+            user: SessionUser | null
+            ledger: Ledger | null
+            ledgers: Ledger[]
+            csrf: string
+            aiUsable: boolean
+            needsSetup: boolean
+            siteName: string
+            baseCurrency: string
+          }
+        }>('/session')
+        const d = data.data
+        this.user = d.user
+        this.ledgers = d.ledgers || []
+        this.currentLedger = d.ledger
+        this.csrf = d.csrf
+        this.aiUsable = d.aiUsable
+        this.needsSetup = d.needsSetup
+        this.siteName = d.siteName || '家账簿'
+        this.baseCurrency = d.baseCurrency || 'CNY'
+        if (d.user?.theme) this.setTheme(d.user.theme)
+        else this.setTheme(this.theme)
+        this.loaded = true
+      } finally {
+        this.loading = false
+      }
+    },
+    async switchLedger(ledgerId: number) {
+      const fd = new FormData()
+      fd.append('ledger_id', String(ledgerId))
+      fd.append('back', window.location.pathname + window.location.search)
+      const csrf = this.csrf
+      // 复用原 SSR 端点（POST 一次，session 切账本）
+      const res = await fetch('/ledgers/switch', {
+        method: 'POST',
+        body: fd,
+        credentials: 'include',
+        headers: csrf ? { 'X-CSRF-Token': csrf } : undefined,
+      })
+      if (res.ok || res.redirected) {
+        await this.refresh()
+      }
+    },
+    async logout() {
+      try {
+        const fd = new FormData()
+        fd.append('_csrf', this.csrf)
+        await fetch('/logout', { method: 'POST', body: fd, credentials: 'include' })
+      } catch { /* ignore */ }
+      this.user = null
+      this.currentLedger = null
+      this.ledgers = []
+    },
+  },
+})

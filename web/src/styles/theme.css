@@ -1,0 +1,148 @@
+/* 全局主题 token —— 浅色 / 暗色
+   Naive UI 通过 :root[data-theme] 变量覆盖 */
+
+:root[data-theme='light'] {
+  --hl-bg:         #f3f5f9;
+  --hl-card:       #ffffff;
+  --hl-card-2:     #f7f8fb;
+  --hl-border:     #e6eaf1;
+  --hl-text:       #17202e;
+  --hl-text-2:     #45516a;
+  --hl-muted:      #7d8aa3;
+  --hl-primary:    #3d6df5;
+  --hl-primary-2:  #e8efff;
+  --hl-income:     #12a150;
+  --hl-income-bg:  #e8f6ed;
+  --hl-expense:    #e5484d;
+  --hl-expense-2:  #feefef;
+  --hl-warn:       #c97a16;
+  --hl-info:       #2c7be5;
+  --hl-purple:     #6f4ce8;
+  --hl-shadow:     0 1px 2px rgba(15,22,36,.04);
+  color-scheme: light;
+}
+
+:root[data-theme='dark'] {
+  --hl-bg:         #0f1117;
+  --hl-card:       #181c25;
+  --hl-card-2:     #20242f;
+  --hl-border:     #2a2f3a;
+  --hl-text:       #e6e9f0;
+  --hl-text-2:     #b0b8c5;
+  --hl-muted:      #7d8595;
+  --hl-primary:    #6b8eff;
+  --hl-primary-2:  #1f2a4a;
+  --hl-income:     #3ed598;
+  --hl-income-bg:  #0e2a1c;
+  --hl-expense:    #ff7172;
+  --hl-expense-2:  #2a1313;
+  --hl-warn:       #e0a23d;
+  --hl-info:       #57a0ff;
+  --hl-purple:     #a98aff;
+  --hl-shadow:     0 1px 2px rgba(0,0,0,.4);
+  color-scheme: dark;
+}
+
+html, body, #app {
+  background: var(--hl-bg);
+  color: var(--hl-text);
+  height: 100%;
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', 'Segoe UI', sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+a { color: inherit; text-decoration: none; }
+button { font-family: inherit; }
+
+/* 暗色下边框 */
+.hl-theme-dark .n-card,
+.hl-theme-dark .n-layout-sider,
+.hl-theme-dark .n-layout-header,
+.hl-theme-dark .hl-stat,
+.hl-theme-dark .hl-app,
+.hl-theme-dark .hl-topbar,
+.hl-theme-dark .hl-sider { background: var(--hl-card) !important; border-color: var(--hl-border) !important; color: var(--hl-text); }
+.hl-theme-dark .hl-content { background: var(--hl-bg) !important; }
+.hl-theme-dark .hl-txn-list .row { background: var(--hl-card) !important; border-color: var(--hl-border) !important; }
+.hl-theme-dark .hl-txn-list .row:hover { background: var(--hl-card-2) !important; }
+
+/* 暗色下金额红绿使用更亮的色 */
+.hl-theme-dark .hl-amount.income { color: var(--hl-income) !important; }
+.hl-theme-dark .hl-amount.expense { color: var(--hl-expense) !important; }
+
+/* 暗色下日历有数据日期的底色热力能看清 */
+.hl-theme-dark .day {
+  background: var(--hl-card);
+  border-color: var(--hl-border);
+  color: var(--hl-text);
+}
+.hl-theme-dark .day.empty { background: var(--hl-card-2); }
+.hl-theme-dark .day.selected { background: var(--hl-primary-2) !important; }
+.hl-theme-dark .day .num { color: var(--hl-text); }
+.hl-theme-dark .day .income { color: var(--hl-income); }
+.hl-theme-dark .day .expense { color: var(--hl-expense); }
+
+/* 暗色下的上报魔性背景 */
+.hl-theme-dark .cmp,
+.hl-theme-dark .stat-bg,
+.hl-theme-dark .debt-head { background: var(--hl-card-2); }
+.hl-theme-dark .brand-card {
+  background: linear-gradient(135deg, rgba(107, 142, 255, 0.08), rgba(107, 142, 255, 0.03)) !important;
+}
+
+/* 暗色下的 ico 背景 */
+.hl-theme-dark .ico.in { background: #0e2a1c; color: var(--hl-income); }
+.hl-theme-dark .ico.out { background: #2a1313; color: var(--hl-expense); }
+.hl-theme-dark .ico.move, .hl-theme-dark .ico.neutral { background: #20242f; color: var(--hl-muted); }
+
+/* 暗色下 thumb 边框 */
+.hl-theme-dark .thumb { background: var(--hl-card-2); border-color: var(--hl-border); }
+.hl-theme-dark .thumb img { opacity: .9; }
+
+/* 暗色下 msg bubble */
+.hl-theme-dark .bubble { background: var(--hl-card-2); color: var(--hl-text); }
+.hl-theme-dark .msg.user .bubble { background: var(--hl-primary-2); }
+
+/* 暗色下 preview 背景 */
+.hl-theme-dark .notif:hover,
+.hl-theme-dark .row:hover,
+.hl-theme-dark .day-list .row:hover { background: var(--hl-card-2) !important; }
+.hl-theme-dark .notif { border-color: var(--hl-border) !important; }
+.hl-theme-dark .notif.unread { background: rgba(107, 142, 255, 0.05) !important; }
+.hl-theme-dark .notif.unread:hover { background: rgba(107, 142, 255, 0.1) !important; }
+
+/* 暗色下 icon tone 背景 */
+.hl-theme-dark .ico.tone-info { background: #1f2a4a; color: #57a0ff; }
+.hl-theme-dark .ico.tone-warning { background: #2a1f0e; color: #e0a23d; }
+.hl-theme-dark .ico.tone-error { background: #2a1313; color: #ff7172; }
+.hl-theme-dark .ico.tone-default { background: #20242f; color: var(--hl-muted); }
+
+/* 暗色下 upload 虚线边框 */
+.hl-theme-dark .n-upload-dragger { background: var(--hl-card) !important; border-color: var(--hl-border) !important; }
+
+/* 暗色下 stat 背景 */
+.hl-theme-dark .hl-stat { background: var(--hl-card) !important; }
+
+/* 暗色下全局 body 滚动条 */
+.hl-theme-dark ::-webkit-scrollbar { background: var(--hl-card); }
+.hl-theme-dark ::-webkit-scrollbar-thumb { background: var(--hl-border); }
+
+/* 响应式调整 */
+@media (max-width: 768px) {
+  .hl-sider { display: none; }
+  .hl-mobile-burger { display: flex !important; }
+  .hl-content { margin-left: 0 !important; }
+  .hl-topbar .hl-breadcrumb { display: none; }
+  .hl-stats-grid { grid-template-columns: repeat(2, 1fr) !important; }
+  .n-data-table { font-size: 12px; }
+  .n-data-table .n-data-table-th,
+  .n-data-table .n-data-table-td { padding: 6px 4px !important; }
+}
+@media (max-width: 480px) {
+  .hl-stats-grid { grid-template-columns: 1fr !important; }
+  .day { min-height: 56px !important; }
+  .day .num { font-size: 11px; }
+  .day .info { font-size: 10px; }
+}
+

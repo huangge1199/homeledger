@@ -1,0 +1,23 @@
+/**
+ * Naive UI 主题 token 覆盖 —— 通过 CSS 变量
+ * 详细：https://www.naiveui.com/en-US/os-theme/docs/customize-theme
+ */
+
+/* primary 颜色覆盖 */
+:root {
+  --n-primary-color: var(--hl-primary);
+  --n-primary-color-hover: var(--hl-primary);
+  --n-primary-color-pressed: var(--hl-primary);
+  --n-primary-color-suppl: var(--hl-primary);
+}
+
+/* 暗色下覆盖 Naive 内部 */
+.hl-theme-dark {
+  --n-card-color: var(--hl-card);
+  --n-card-color-embedded: var(--hl-card-2);
+  --n-text-color: var(--hl-text);
+  --n-text-color-disabled: var(--hl-muted);
+  --n-border-color: var(--hl-border);
+  --n-divider-color: var(--hl-border);
+  --n-table-header-color: var(--hl-card-2);
+}

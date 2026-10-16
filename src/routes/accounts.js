@@ -11,37 +11,11 @@ const router = express.Router();
 
 /* ---------------------------------- 账户 ---------------------------------- */
 
-router.get('/accounts', auth.requireLogin, (req, res) => {
+router.get('/accounts', auth.requireLogin, (req, res, next) => {
   const ledger = res.locals.ledger;
   if (!ledger) return res.redirect('/');
-  const ledgerId = Number(ledger.id);
-  const overview = txn.accountOverview(ledgerId);
-  const archived = fd.archivedAccounts(ledgerId);
-  // 最近 30 天各账户流水
-  const flows = all(
-    `SELECT account_id, COALESCE(SUM(CASE WHEN type IN ('expense','lend','repay_pay','fee') THEN amount_base_cents ELSE 0 END),0) AS out,
-            COALESCE(SUM(CASE WHEN type IN ('income','borrow','repay_receive','reimburse','refund','interest') THEN amount_base_cents ELSE 0 END),0) AS inflow
-     FROM transactions WHERE ledger_id = ? AND deleted_at IS NULL AND txn_date >= date(?, '-30 day')
-     GROUP BY account_id`,
-    ledgerId, todayStr()
-  );
-  const flowMap = new Map(flows.map((f) => [Number(f.account_id), f]));
-  const accounts = overview.accounts.map((a) => ({
-    ...a,
-    flow: flowMap.get(Number(a.id)) || { out: 0, inflow: 0 },
-    typeLabel: ACCOUNT_TYPE_MAP[a.type]?.label || a.type,
-    isLiability: ['credit', 'loan', 'payable'].includes(a.type),
-  }));
-  // 按类型分组
-  const groups = {};
-  for (const a of accounts) {
-    (groups[a.type] = groups[a.type] || []).push(a);
-  }
-  const budgetsByAccount = all("SELECT * FROM budgets WHERE ledger_id = ? AND scope = 'account' AND is_active = 1", ledgerId);
-  res.render('accounts', {
-    title: '账户管理', activeNav: 'accounts',
-    accounts, archived, groups, overview, budgetsByAccount,
-  });
+  // SPA 时代：交给前端路由 /accounts 渲染（数据由 /api/v1/accounts 拉取）
+  next();
 });
 
 router.post('/accounts', auth.requireLogin, auth.requireLedgerWrite, (req, res) => {
@@ -148,52 +122,22 @@ router.post('/accounts/:id/adjust', auth.requireLogin, auth.requireLedgerWrite, 
   res.redirect('/accounts');
 });
 
-/** 账户明细 */
-router.get('/accounts/:id', auth.requireLogin, (req, res) => {
+/** 账户明细：SPA 时代只校验存在性后交给前端路由 */
+router.get('/accounts/:id', auth.requireLogin, (req, res, next) => {
   const ledgerId = Number(res.locals.ledger.id);
   const acc = get('SELECT * FROM accounts WHERE id = ? AND ledger_id = ?', Number(req.params.id), ledgerId);
-  if (!acc) return res.status(404).render('error', { title: '账户不存在', message: '该账户可能已被删除。' });
-  const f = {
-    accountId: Number(acc.id),
-    from: req.query.from || '',
-    to: req.query.to || '',
-    page: Number(req.query.page) || 1,
-    pageSize: 40,
-    sort: 'date_desc',
-  };
-  const result = txn.listTransactions(ledgerId, f);
-  const form = fd.txFormData(ledgerId, req.session.userId);
-  res.render('account-detail', {
-    title: `账户 · ${acc.name}`, activeNav: 'accounts', acc, f, result,
-    groups: txn.groupByDate(result.rows), form,
-    typeLabel: ACCOUNT_TYPE_MAP[acc.type]?.label || acc.type,
-  });
+  if (!acc) {
+    res.flash('error', '账户不存在或已被删除');
+    return res.status(404).redirect('/accounts');
+  }
+  next();
 });
 
 /* ---------------------------------- 分类 ---------------------------------- */
 
-router.get('/categories', auth.requireLogin, (req, res) => {
-  const ledgerId = Number(res.locals.ledger.id);
-  const expenseTree = fd.categoryTree(ledgerId, 'expense');
-  const incomeTree = fd.categoryTree(ledgerId, 'income');
-  // 每个分类的笔数与金额（近一年）
-  const stats = all(
-    `SELECT category_id, COUNT(*) AS cnt, COALESCE(SUM(amount_base_cents),0) AS total
-     FROM transactions WHERE ledger_id = ? AND deleted_at IS NULL AND txn_date >= date('now','-365 day')
-     GROUP BY category_id`,
-    ledgerId
-  );
-  const statMap = new Map(stats.map((s) => [Number(s.category_id), s]));
-  const decorate = (node) => ({
-    ...node,
-    stat: statMap.get(Number(node.id)) || { cnt: 0, total: 0 },
-    children: (node.children || []).map(decorate),
-  });
-  res.render('categories', {
-    title: '分类管理', activeNav: 'categories',
-    expenseTree: expenseTree.map(decorate),
-    incomeTree: incomeTree.map(decorate),
-  });
+router.get('/categories', auth.requireLogin, (req, res, next) => {
+  // SPA 时代：交给前端路由 /categories 渲染（数据由 /api/v1/categories 拉取）
+  next();
 });
 
 router.post('/categories', auth.requireLogin, auth.requireLedgerWrite, (req, res) => {
@@ -250,16 +194,9 @@ router.post('/categories/:id/delete', auth.requireLogin, auth.requireLedgerWrite
 
 /* ---------------------------------- 标签 ---------------------------------- */
 
-router.get('/tags', auth.requireLogin, (req, res) => {
-  const ledgerId = Number(res.locals.ledger.id);
-  const tags = all(
-    `SELECT t.*, (SELECT COUNT(*) FROM transaction_tags tt WHERE tt.tag_id = t.id) AS cnt,
-       (SELECT COALESCE(SUM(x.amount_base_cents),0) FROM transaction_tags tt JOIN transactions x ON x.id = tt.transaction_id
-         WHERE tt.tag_id = t.id AND x.deleted_at IS NULL) AS total
-     FROM tags t WHERE t.ledger_id = ? ORDER BY cnt DESC, t.id`,
-    ledgerId
-  );
-  res.render('tags', { title: '标签管理', activeNav: 'tags', tags });
+router.get('/tags', auth.requireLogin, (req, res, next) => {
+  // SPA 时代：交给前端路由 /tags 渲染（数据由 /api/v1/tags 拉取）
+  next();
 });
 
 router.post('/tags', auth.requireLogin, auth.requireLedgerWrite, (req, res) => {

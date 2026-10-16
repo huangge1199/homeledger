@@ -40,60 +40,11 @@ function parseRange(q, ledgerId = 0) {
   return { start: `${month}-01`, end: `${month}-31`, label: u.monthLabel(month), preset: 'month', key: month, month };
 }
 
-router.get('/reports', auth.requireLogin, (req, res) => {
+router.get('/reports', auth.requireLogin, (req, res, next) => {
   const ledger = res.locals.ledger;
   if (!ledger) return res.redirect('/');
-  const ledgerId = Number(ledger.id);
-  const range = parseRange(req.query, ledgerId);
-  const kind = req.query.kind === 'income' ? 'income' : 'expense';
-
-  const sum = txn.summary(ledgerId, range.start, range.end);
-  const cats = txn.categoryBreakdown(ledgerId, range.start, range.end, kind);
-  const subcats = txn.subcategoryBreakdown(ledgerId, range.start, range.end, kind, req.query.top || null);
-  const trend = txn.monthlyTrend(ledgerId, 12);
-  const days = txn.dailyBreakdown(ledgerId, range.start, range.end);
-  const members = txn.memberBreakdown(ledgerId, range.start, range.end);
-  const netWorth = txn.netWorthTrend(ledgerId, 12);
-  const overview = txn.accountOverview(ledgerId);
-
-  // 同期对比
-  let compare = null;
-  if (range.preset === 'month' && range.month) {
-    const prevMonth = u.addMonths(range.month, -1);
-    const prev = txn.summary(ledgerId, `${prevMonth}-01`, `${prevMonth}-31`);
-    const lastYearMonth = `${Number(range.month.slice(0, 4)) - 1}-${range.month.slice(5, 7)}`;
-    const lastYear = txn.summary(ledgerId, `${lastYearMonth}-01`, `${lastYearMonth}-31`);
-    compare = {
-      prevMonth: { label: u.monthLabel(prevMonth), ...prev },
-      lastYear: { label: u.monthLabel(lastYearMonth), ...lastYear },
-    };
-  }
-
-  // 星期分布
-  const weekday = new Array(7).fill(0);
-  for (const d of days) {
-    const wd = new Date(`${d.date}T00:00:00`).getDay();
-    weekday[wd] += d.expense;
-  }
-
-  // 消费笔数 & 均值
-  const expenseCount = get(
-    `SELECT COUNT(*) AS c, COALESCE(AVG(amount_base_cents),0) AS avg FROM transactions
-     WHERE ledger_id = ? AND deleted_at IS NULL AND txn_date BETWEEN ? AND ? AND type IN ('expense','fee')`,
-    ledgerId, range.start, range.end
-  );
-  const maxDay = days.reduce((a, b) => (b.expense > (a?.expense || 0) ? b : a), null);
-
-  // 记账天数
-  const activeDays = days.filter((d) => d.count > 0).length;
-
-  res.render('reports', {
-    title: '报表分析', activeNav: 'reports',
-    range, kind, sum, cats, subcats, trend, days, members, netWorth, overview,
-    compare, weekday, expenseCount, maxDay, activeDays,
-    top: req.query.top || null,
-    today: todayStr(),
-  });
+  // SPA 时代：交给前端路由 /reports 渲染（数据由 /api/v1/reports 拉取）
+  next();
 });
 
 module.exports = router;

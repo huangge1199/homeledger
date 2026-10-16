@@ -1,0 +1,25 @@
+/**
+ * 全局重置 + 基础排版
+ * 主题色由 theme.css 提供
+ */
+*, *::before, *::after { box-sizing: border-box; }
+html, body, #app { margin: 0; padding: 0; }
+body {
+  font-family: var(--font, -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif);
+  background: var(--hl-bg);
+  color: var(--hl-text);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+a { color: var(--hl-primary); text-decoration: none; }
+a:hover { opacity: .85; }
+button { font-family: inherit; }
+.ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* 通用文本 */
+.muted { color: var(--hl-muted); }
+.income { color: var(--hl-income); }
+.expense { color: var(--hl-expense); }
+.warn { color: var(--hl-warn); }
+.info { color: var(--hl-info); }

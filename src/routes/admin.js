@@ -26,57 +26,9 @@ setInterval(() => {
 
 /* ---------------------------------- 设置 ---------------------------------- */
 
-router.get('/settings', auth.requireLogin, (req, res) => {
-  const cfg = ai.getAiConfig();
-  // 新令牌明文只展示一次：取走即删，刷新/重进后不再出现
-  const newToken = req.session.newToken || null;
-  delete req.session.newToken;
-  const isAdmin = !!res.locals.user.is_admin;
-  // 管理员：附带「系统管理」区块数据（用户 / 统计 / 审计日志）
-  let adminData = null;
-  if (isAdmin) {
-    adminData = {
-      users: all(
-        `SELECT u.*,
-          (SELECT COUNT(*) FROM ledger_members m WHERE m.user_id = u.id) AS ledger_count,
-          (SELECT COUNT(*) FROM transactions t WHERE t.user_id = u.id AND t.deleted_at IS NULL) AS txn_count
-         FROM users u ORDER BY u.id`
-      ),
-      stats: {
-        users: Number(get('SELECT COUNT(*) AS c FROM users')?.c || 0),
-        ledgers: Number(get('SELECT COUNT(*) AS c FROM ledgers')?.c || 0),
-        txns: Number(get('SELECT COUNT(*) AS c FROM transactions WHERE deleted_at IS NULL')?.c || 0),
-        attachments: Number(get('SELECT COUNT(*) AS c FROM attachments')?.c || 0),
-        dbSize: safeSize(DB_FILE),
-        uploadsSize: dirSize(path.join(DATA_DIR, 'uploads')),
-      },
-      audits: all('SELECT a.*, u.display_name FROM audit_logs a LEFT JOIN users u ON u.id = a.user_id ORDER BY a.id DESC LIMIT 60'),
-    };
-  }
-  res.render('settings', {
-    title: '设置', activeNav: 'settings',
-    cfg,
-    aiReady: ai.isAiReady(),
-    settings: require('../db').allSettings(),
-    isAdmin,
-    newToken,
-    admin: adminData,
-    apiTokens: all(
-      `SELECT id, name, token_tail, last_used_at, created_at FROM api_tokens
-       WHERE user_id = ? AND revoked_at IS NULL ORDER BY id DESC`,
-      res.locals.user.id
-    ),
-    envInfo: {
-      node: process.version,
-      platform: process.platform,
-      pid: process.pid,
-      mem: Math.round(process.memoryUsage().rss / 1024 / 1024),
-      dataDir: DATA_DIR,
-      dbSize: safeSize(DB_FILE),
-      uptime: Math.round(process.uptime()),
-      tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
-    },
-  });
+router.get('/settings', auth.requireLogin, (req, res, next) => {
+  // SPA 时代：交给前端路由 /settings 渲染（数据由 /api/v1/admin/settings 拉取）
+  next();
 });
 
 function safeSize(p) {
@@ -280,17 +232,9 @@ router.post('/api/ai/models', auth.requireLogin, require('../lib/auth').requireA
 
 /* ---------------------------------- 账本 ---------------------------------- */
 
-router.get('/ledgers', auth.requireLogin, (req, res) => {
-  const rows = all(
-    `SELECT l.*, m.role,
-      (SELECT COUNT(*) FROM transactions t WHERE t.ledger_id = l.id AND t.deleted_at IS NULL) AS txn_count,
-      (SELECT COUNT(*) FROM ledger_members x WHERE x.ledger_id = l.id) AS member_count,
-      (SELECT COUNT(*) FROM accounts a WHERE a.ledger_id = l.id) AS account_count
-     FROM ledgers l JOIN ledger_members m ON m.ledger_id = l.id AND m.user_id = ?
-     ORDER BY l.is_archived, l.sort_order, l.id`,
-    req.session.userId
-  );
-  res.render('ledgers', { title: '账本管理', activeNav: 'ledgers', rows, today: todayStr() });
+router.get('/ledgers', auth.requireLogin, (req, res, next) => {
+  // SPA 时代：交给前端路由 /ledgers 渲染（数据由 /api/v1/ledgers 拉取）
+  next();
 });
 
 router.post('/ledgers', auth.requireLogin, (req, res) => {
@@ -408,19 +352,11 @@ router.post('/ledgers/:id/delete', auth.requireLogin, (req, res) => {
 
 /* ---------------------------------- 成员 ---------------------------------- */
 
-router.get('/members', auth.requireLogin, (req, res) => {
+router.get('/members', auth.requireLogin, (req, res, next) => {
   const ledger = res.locals.ledger;
   if (!ledger) return res.redirect('/');
-  const ledgerId = Number(ledger.id);
-  const members = fd.members(ledgerId);
-  const invites = all('SELECT i.*, u.display_name AS creator FROM ledger_invites i LEFT JOIN users u ON u.id = i.created_by WHERE i.ledger_id = ? ORDER BY i.id DESC LIMIT 20', ledgerId);
-  const stats = txn.memberBreakdown(ledgerId, `${todayStr().slice(0, 7)}-01`, `${todayStr().slice(0, 7)}-31`);
-  const statMap = new Map(stats.map((s) => [Number(s.id), s]));
-  res.render('members', {
-    title: '成员与权限', activeNav: 'members',
-    members: members.map((m) => ({ ...m, stat: statMap.get(Number(m.user_id)) || { cnt: 0, expense: 0, income: 0 } })),
-    invites,
-  });
+  // SPA 时代：交给前端路由 /members 渲染（数据由 /api/v1/ledgers/:id/members 拉取）
+  next();
 });
 
 router.post('/members/invite', auth.requireLogin, auth.requireLedgerManage, (req, res) => {
@@ -477,11 +413,9 @@ router.post('/members/invites/:id/revoke', auth.requireLogin, auth.requireLedger
 
 /* ------------------------------- 导入 / 导出 ------------------------------ */
 
-router.get('/import', auth.requireLogin, auth.requireLedgerWrite, (req, res) => {
-  const ledgerId = Number(res.locals.ledger.id);
-  const jobs = all('SELECT * FROM import_jobs WHERE ledger_id = ? ORDER BY id DESC LIMIT 20', ledgerId);
-  const accounts = fd.accounts(ledgerId);
-  res.render('import', { title: '账单导入', activeNav: 'import', jobs, accounts, preview: null, token: null });
+router.get('/import', auth.requireLogin, auth.requireLedgerWrite, (req, res, next) => {
+  // SPA 时代：交给前端路由 /import 渲染（数据由 /api/v1/import/jobs 等拉取）
+  next();
 });
 
 router.post('/api/import/preview', auth.requireLogin, auth.requireLedgerWrite, (req, res) => {
@@ -599,16 +533,11 @@ router.post('/api/import/commit', auth.requireLogin, auth.requireLedgerWrite, (r
   }
 });
 
-router.get('/export', auth.requireLogin, (req, res) => {
+router.get('/export', auth.requireLogin, (req, res, next) => {
   const ledger = res.locals.ledger;
   if (!ledger) return res.redirect('/');
-  const ledgerId = Number(ledger.id);
-  const form = fd.txFormData(ledgerId, req.session.userId);
-  const years = all(
-    "SELECT DISTINCT substr(txn_date,1,4) AS y FROM transactions WHERE ledger_id = ? AND deleted_at IS NULL ORDER BY y DESC",
-    ledgerId
-  ).map((r) => r.y);
-  res.render('export', { title: '导出与备份', activeNav: 'export', form, years, isAdmin: !!res.locals.user.is_admin });
+  // SPA 时代：交给前端路由 /export 渲染（数据由 /api/v1/export/form 拉取）
+  next();
 });
 
 router.get('/export/csv', auth.requireLogin, (req, res) => {

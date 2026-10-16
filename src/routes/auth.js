@@ -1,5 +1,5 @@
 'use strict';
-/** 登录 / 注册 / 初始化 / 账本切换 / 邀请加入 */
+/** 登录 / 注册 / 初始化 / 账本切换 / 邀请加入（v2 SPA：不再渲染模板，仅处理 API 语义） */
 const express = require('express');
 const { all, get, run, nowStr, getSetting } = require('../db');
 const auth = require('../lib/auth');
@@ -16,11 +16,23 @@ function safeNext(next) {
   return next;
 }
 
+/**
+ * 把错误回写到 flash 并重定向回 SPA 页面，
+ * 由前端 useFlash() 在 AppShell 顶部展示。
+ */
+function failWith(res, pagePath, message, status = 400, extra = {}) {
+  if (res.flash) res.flash('error', message);
+  else if (req.session) req.session.flash = { type: 'error', message };
+  const qs = new URLSearchParams(extra).toString();
+  return res.status(status).redirect(qs ? `${pagePath}?${qs}` : pagePath);
+}
+
 /* ---------------------------------- 登录 ---------------------------------- */
 
-router.get('/login', (req, res) => {
+router.get('/login', (req, res, next) => {
   if (res.locals.user) return res.redirect('/');
-  res.render('login', { title: '登录', next: safeNext(req.query.next), layout: 'layout-blank', error: null, username: '' });
+  // SPA 时代：交给前端路由 /login 渲染；Vue Router 会读取 flash
+  next();
 });
 
 router.post('/login', (req, res) => {
@@ -31,23 +43,24 @@ router.post('/login', (req, res) => {
 
   const locked = auth.tooManyAttempts(req, username, maxFail);
   if (locked) {
-    return res.status(429).render('login', {
-      title: '登录', next, layout: 'layout-blank', username,
-      error: `尝试次数过多，请在 ${locked} 分钟后重试。`,
-    });
+    res.flash('error', `尝试次数过多，请在 ${locked} 分钟后重试。`);
+    const qs = new URLSearchParams({ next }).toString();
+    return res.status(429).redirect(`/login?${qs}`);
   }
   const user = get('SELECT * FROM users WHERE username = ?', username);
   if (!user || user.status !== 'active' || !auth.verifyPassword(password, user.password_hash)) {
     auth.recordFailure(req, username, maxFail);
     auth.audit(req, 'login.fail', { entity: 'user', detail: username });
-    return res.status(401).render('login', {
-      title: '登录', next, layout: 'layout-blank', username,
-      error: '用户名或密码不正确。',
-    });
+    res.flash('error', '用户名或密码不正确。');
+    const qs = new URLSearchParams({ next, u: username }).toString();
+    return res.status(401).redirect(`/login?${qs}`);
   }
   auth.clearFailures(req, username);
   req.session.regenerate((err) => {
-    if (err) return res.status(500).render('error', { title: '登录失败', message: err.message });
+    if (err) {
+      res.flash('error', '登录失败：' + (err?.message || '会话初始化失败'));
+      return res.redirect('/login');
+    }
     req.session.userId = Number(user.id);
     req.session.csrf = util.uid(40);
     run('UPDATE users SET last_login_at = ? WHERE id = ?', nowStr(), user.id);
@@ -68,27 +81,32 @@ router.post('/logout', auth.requireLogin, (req, res) => {
 
 /* ---------------------------------- 注册 ---------------------------------- */
 
-router.get('/register', (req, res) => {
+router.get('/register', (req, res, next) => {
   if (res.locals.user) return res.redirect('/');
   if (String(getSetting('site.allow_register', 'false')) !== 'true') {
-    return res.render('login', {
-      title: '登录', next: '/', layout: 'layout-blank', username: '',
-      error: '本站未开放自助注册，请联系管理员邀请你加入账本。',
-    });
+    res.flash('error', '本站未开放自助注册，请联系管理员邀请你加入账本。');
+    return res.redirect('/login');
   }
-  res.render('register', { title: '注册', layout: 'layout-blank', error: null, form: {} });
+  next();
 });
 
 router.post('/register', (req, res) => {
   if (String(getSetting('site.allow_register', 'false')) !== 'true') {
-    return res.status(403).render('error', { title: '注册已关闭', message: '本站未开放自助注册。' });
+    res.flash('error', '本站未开放自助注册。');
+    return res.status(403).redirect('/login');
   }
   const username = String(req.body.username || '').trim();
   const displayName = String(req.body.display_name || '').trim() || username;
   const password = String(req.body.password || '');
   const password2 = String(req.body.password2 || '');
   const email = String(req.body.email || '').trim() || null;
-  const fail = (error) => res.status(400).render('register', { title: '注册', layout: 'layout-blank', error, form: { username, display_name: displayName, email } });
+  const fail = (error) => {
+    res.flash('error', error);
+    const qs = new URLSearchParams({
+      u: username, d: displayName, e: email || '',
+    }).toString();
+    return res.status(400).redirect(`/register?${qs}`);
+  };
 
   if (!USERNAME_RE.test(username)) return fail('用户名需 3–32 位，仅支持字母、数字、下划线、点、@ 和短横线。');
   if (password.length < 6) return fail('密码至少 6 位。');
@@ -113,10 +131,10 @@ router.post('/register', (req, res) => {
 
 /* -------------------------------- 首次初始化 ------------------------------- */
 
-router.get('/setup', (req, res) => {
+router.get('/setup', (req, res, next) => {
   const hasUser = Number(get('SELECT COUNT(*) AS c FROM users')?.c || 0) > 0;
   if (hasUser) return res.redirect('/login');
-  res.render('setup', { title: '初始化', layout: 'layout-blank', error: null, form: {} });
+  next();
 });
 
 router.post('/setup', (req, res) => {
@@ -127,7 +145,11 @@ router.post('/setup', (req, res) => {
   const password = String(req.body.password || '');
   const password2 = String(req.body.password2 || '');
   const siteName = String(req.body.site_name || '').trim();
-  const fail = (error) => res.status(400).render('setup', { title: '初始化', layout: 'layout-blank', error, form: { username, display_name: displayName, site_name: siteName } });
+  const fail = (error) => {
+    res.flash('error', error);
+    const qs = new URLSearchParams({ u: username, d: displayName, s: siteName }).toString();
+    return res.status(400).redirect(`/setup?${qs}`);
+  };
 
   if (!USERNAME_RE.test(username)) return fail('用户名需 3–32 位，仅支持字母、数字、下划线、点、@ 和短横线。');
   if (password.length < 8) return fail('管理员密码至少 8 位，建议包含字母与数字。');
@@ -163,21 +185,29 @@ router.post('/ledgers/switch', auth.requireLogin, (req, res) => {
 function resolveInvite(req, res) {
   const code = String(req.params.code || '').trim();
   const invite = get('SELECT * FROM ledger_invites WHERE code = ?', code);
-  if (!invite) { res.status(404).render('error', { title: '邀请无效', message: '邀请链接不存在或已被删除。' }); return null; }
+  if (!invite) {
+    res.flash('error', '邀请链接不存在或已被删除。');
+    res.status(404).redirect('/'); return null;
+  }
   if (invite.expires_at && invite.expires_at < require('../db').todayStr()) {
-    res.status(410).render('error', { title: '邀请已过期', message: '请让账本管理员重新生成邀请链接。' }); return null;
+    res.flash('error', '邀请已过期，请让账本管理员重新生成邀请链接。');
+    res.status(410).redirect('/'); return null;
   }
   // 已使用的邀请一律不能再入（含本人）：否则被降级/移出的成员可拿旧链接恢复原角色
   if (Number(invite.used_by)) {
-    res.status(410).render('error', { title: '邀请已使用', message: '该邀请链接已被使用，请让账本管理员重新生成。' }); return null;
+    res.flash('error', '该邀请链接已被使用，请让账本管理员重新生成。');
+    res.status(410).redirect('/'); return null;
   }
   const ledger = get('SELECT * FROM ledgers WHERE id = ?', invite.ledger_id);
-  if (!ledger) { res.status(404).render('error', { title: '账本不存在', message: '该账本已被删除。' }); return null; }
+  if (!ledger) {
+    res.flash('error', '该账本已被删除。');
+    res.status(404).redirect('/'); return null;
+  }
   return { invite, ledger };
 }
 
 /** 邀请确认页：GET 不再直接入账（链接预览机器人/误点不会烧掉单用邀请码） */
-router.get('/join/:code', auth.requireLogin, (req, res) => {
+router.get('/join/:code', auth.requireLogin, (req, res, next) => {
   const found = resolveInvite(req, res);
   if (!found) return;
   const { invite, ledger } = found;
@@ -186,14 +216,19 @@ router.get('/join/:code', auth.requireLogin, (req, res) => {
     req.session.flash = { type: 'info', message: `你已是账本「${ledger.name}」的成员` };
     return res.redirect('/');
   }
-  res.render('join', {
-    title: '加入账本', layout: 'layout-blank',
-    code: invite.code, ledgerName: ledger.name,
-    roleLabel: auth.ROLE_LABEL[invite.role] || '成员',
+  // 把邀请信息塞到 flash / query，前端 /join 页面读取并展示
+  req.session.flash = {
+    type: 'info',
+    message: `邀请码：${invite.code} · 账本「${ledger.name}」`,
+  };
+  const qs = new URLSearchParams({
+    code: invite.code,
+    ledger: ledger.name,
+    role: auth.ROLE_LABEL[invite.role] || '成员',
     creator: (get('SELECT display_name FROM users WHERE id = ?', invite.created_by) || {}).display_name || '—',
-    expiresAt: invite.expires_at || '',
-    error: null,
-  });
+    expires: invite.expires_at || '',
+  }).toString();
+  res.redirect(`/join?${qs}`);
 });
 
 /** 确认加入（POST） */

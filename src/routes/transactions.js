@@ -1,5 +1,5 @@
 'use strict';
-/** 交易：列表 / 记一笔 / 编辑 / 批量操作 / 报销 */
+/** 交易：列表 / 记一笔 / 编辑 / 批量操作 / 报销（v2 SPA：仅保留接口语义） */
 const express = require('express');
 const { all, get, run, todayStr, TXN_TYPE_MAP } = require('../db');
 const auth = require('../lib/auth');
@@ -56,64 +56,18 @@ router.get('/:id/json', auth.requireLogin, (req, res) => {
   res.json({ ok: true, txn: t, attachments: att.listByTxn(t.id) });
 });
 
-router.get('/', auth.requireLogin, (req, res) => {
+router.get('/', auth.requireLogin, (req, res, next) => {
   const ledger = res.locals.ledger;
   if (!ledger) return res.redirect('/');
-  const ledgerId = Number(ledger.id);
-  const f = {
-    type: req.query.type || '',
-    kind: req.query.kind || '',
-    categoryId: req.query.category_id ? Number(req.query.category_id) : null,
-    accountId: req.query.account_id ? Number(req.query.account_id) : null,
-    memberId: req.query.member_id ? Number(req.query.member_id) : null,
-    tagId: req.query.tag_id ? Number(req.query.tag_id) : null,
-    source: req.query.source || '',
-    month: req.query.month || '',
-    from: req.query.from || '',
-    to: req.query.to || '',
-    keyword: req.query.q || '',
-    reimbursable: req.query.reimbursable || '',
-    sort: req.query.sort || 'date_desc',
-    page: Number(req.query.page) || 1,
-    pageSize: 40,
-  };
-  const result = txn.listTransactions(ledgerId, f);
-  const form = fd.txFormData(ledgerId, req.session.userId);
-  res.render('transactions', {
-    title: '账单明细', activeNav: 'transactions',
-    f, result, groups: txn.groupByDate(result.rows), form,
-    totalPages: result.pages,
-  });
+  // SPA 时代：交给前端路由 /transactions 渲染（数据由 /api/v1/transactions 拉取）
+  next();
 });
 
 /* --------------------------------- 记一笔 --------------------------------- */
 
-router.get('/new', auth.requireLogin, auth.requireLedgerWrite, (req, res) => {
-  const ledgerId = Number(res.locals.ledger.id);
-  const type = TXN_TYPE_MAP[req.query.type] ? req.query.type : 'expense';
-  const form = fd.txFormData(ledgerId, req.session.userId);
-  const prefill = {
-    type,
-    amount: req.query.amount || '',
-    txn_date: req.query.date || todayStr(),
-    category_id: req.query.category_id || '',
-    account_id: req.query.account_id || (form.accounts[0] ? form.accounts[0].id : ''),
-    to_account_id: '',
-    note: req.query.note || '',
-    merchant: '',
-    tags: '',
-    is_reimbursable: 0,
-    currency: 'CNY',
-    rate: 1,
-    status: 'cleared',
-  };
-  if (req.query.from_ai) {
-    prefill.note = req.query.note || prefill.note;
-  }
-  res.render('txn-form', {
-    title: '记一笔', activeNav: 'new', mode: 'create', form, t: prefill,
-    splitRows: [], splits: [], back: req.query.back || '/transactions',
-  });
+router.get('/new', auth.requireLogin, auth.requireLedgerWrite, (req, res, next) => {
+  // SPA 时代：交给前端路由 /transactions/new 渲染（前端 NewTxnView 自行填 prefilled 数据）
+  next();
 });
 
 router.post('/', auth.requireLogin, auth.requireLedgerWrite, (req, res) => {
@@ -128,29 +82,22 @@ router.post('/', auth.requireLogin, auth.requireLedgerWrite, (req, res) => {
     res.redirect(safeBack(req.body.back));
   } catch (e) {
     if (wantsJson) return res.status(400).json({ ok: false, error: e.message });
-    const form = fd.txFormData(ledgerId, req.session.userId);
-    res.status(400).render('txn-form', {
-      title: '记一笔', activeNav: 'new', mode: 'create', form,
-      t: { ...data, amount: (data.amount_cents / 100).toFixed(2) },
-      splitRows: data.splits, splits: [], back: safeBack(req.body.back), error: e.message,
-    });
+    res.flash('error', e.message || '保存失败');
+    res.status(400).redirect(safeBack(req.body.back));
   }
 });
 
 /* ---------------------------------- 编辑 ---------------------------------- */
 
-router.get('/:id/edit', auth.requireLogin, auth.requireLedgerWrite, (req, res) => {
+router.get('/:id/edit', auth.requireLogin, auth.requireLedgerWrite, (req, res, next) => {
   const ledgerId = Number(res.locals.ledger.id);
   const t = txn.getTransaction(Number(req.params.id), ledgerId);
-  if (!t) return res.status(404).render('error', { title: '记录不存在', message: '该笔记录可能已被删除。' });
-  const form = fd.txFormData(ledgerId, req.session.userId);
-  res.render('txn-form', {
-    title: '编辑记录', activeNav: 'transactions', mode: 'edit', form, t,
-    splitRows: txn.splitsOf(t.id),
-    splits: txn.splitsOf(t.id),
-    images: att.listByTxn(t.id),
-    back: req.query.back || '/transactions',
-  });
+  if (!t) {
+    res.flash('error', '该笔记录可能已被删除。');
+    return res.status(404).redirect('/transactions');
+  }
+  // SPA 时代：交给前端路由 /transactions/:id/edit 渲染
+  next();
 });
 
 /* --------------------------------- 批量操作 -------------------------------- */
@@ -229,13 +176,8 @@ router.post('/:id', auth.requireLogin, auth.requireLedgerWrite, (req, res) => {
     res.flash('success', '已保存修改');
     res.redirect(safeBack(req.body.back));
   } catch (e) {
-    const form = fd.txFormData(ledgerId, req.session.userId);
-    const t = txn.getTransaction(id, ledgerId);
-    res.status(400).render('txn-form', {
-      title: '编辑记录', activeNav: 'transactions', mode: 'edit', form,
-      t: { ...t, ...data, amount: (data.amount_cents / 100).toFixed(2) },
-      splitRows: data.splits, splits: data.splits, back: safeBack(req.body.back), error: e.message,
-    });
+    res.flash('error', e.message || '保存失败');
+    res.status(400).redirect(safeBack(req.body.back));
   }
 });
 

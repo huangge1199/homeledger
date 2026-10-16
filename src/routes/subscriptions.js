@@ -79,33 +79,21 @@ function readForm(body, userId) {
 
 /* ---------------------------------- 列表 ---------------------------------- */
 
-router.get('/subscriptions', auth.requireLogin, (req, res) => {
+router.get('/subscriptions', auth.requireLogin, (req, res, next) => {
   const ledger = res.locals.ledger;
   if (!ledger) return res.redirect('/');
-  const ledgerId = Number(ledger.id);
-  const sums = subs.overview(ledgerId);
-  res.render('subscriptions', {
-    title: '订阅扣费', activeNav: 'subscriptions',
-    sums, presets: PRESETS, today: todayStr(),
-    form: fd.txFormData(ledgerId, req.session.userId),
-    edit: null,
-  });
+  // SPA 时代：交给前端路由 /subscriptions 渲染（数据由 /api/v1/subscriptions 拉取）
+  next();
 });
 
 /* --------------------------------- 编辑页 --------------------------------- */
 
-router.get('/subscriptions/:id/edit', auth.requireLogin, auth.requireLedgerWrite, (req, res) => {
+router.get('/subscriptions/:id/edit', auth.requireLogin, auth.requireLedgerWrite, (req, res, next) => {
   const ledgerId = Number(res.locals.ledger.id);
   const row = get('SELECT * FROM subscriptions WHERE id = ? AND ledger_id = ?', Number(req.params.id), ledgerId);
   if (!row) { res.flash('error', '订阅不存在'); return res.redirect('/subscriptions'); }
-  const sums = subs.overview(ledgerId);
-  res.render('subscriptions', {
-    title: '编辑订阅', activeNav: 'subscriptions',
-    sums, presets: PRESETS, today: todayStr(),
-    form: fd.txFormData(ledgerId, req.session.userId),
-    edit: subs.decorate(row),
-    history: subs.chargesOf(ledgerId, row.id),
-  });
+  // SPA 时代：交给前端路由 /subscriptions/:id/edit 渲染（数据由 /api/v1/subscriptions/:id 拉取）
+  next();
 });
 
 /* ---------------------------------- 新建 ---------------------------------- */

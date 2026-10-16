@@ -43,9 +43,22 @@ const FEATURES = [
  */
 const CHANGELOG = [
   {
+    version: '2.0.0',
+    date: '2026-10-16',
+    tag: '当前版本',
+    items: [
+      '重大重构：前端从 EJS + jQuery SSR 全面迁移到 Vue 3 + Naive UI SPA（vite/typescript/pinia/vue-router）',
+      '后端同步 API 化：35 个 EJS 渲染路由全部退役，改为纯 JSON 接口 `/api/v1/*`；未匹配 GET 走 SPA fallback，由前端路由接管',
+      '移除 ejs 依赖、删除 `src/views/` 全部 35 个模板与 `public/css/app.css`、`public/js/app.js`、`public/js/assistant.js`、`public/manifest.webmanifest`',
+      '所有页面（登录/初始化/账户/分类/标签/预算/周期/订阅/借贷/目标/导入/导出/账本/成员/通知/设置/AI/日历/搜索/报表/关于）由 32 个 Vue 视图覆盖，桌面 + 移动端双视口统一',
+      '深色主题响应 CSS 变量；可访问性补全（焦点环、aria-label、表单错误提示）；可恢复性：所有 POST 失败通过 flash 回写到前端 useFlash，不再渲染 EJS',
+      'admin/users 系统管理并入 `/settings#admin`；旧 `/admin` 重定向保持兼容',
+    ],
+  },
+  {
     version: '1.8.0',
     date: '2026-10-08',
-    tag: '当前版本',
+    tag: '',
     items: [
       '修复：管理员/拥有者点开成员邀请链接确认加入后，界面被切到受邀账本、角色显示为「成员」，看起来像被降级——现在加入后回到原来的账本，可随时右上角切换；拥有者身份在任何情况下不会被邀请角色覆盖',
       '修复：手机端日期框与成员框重叠/原生控件与桌面风格不一致——自定义下拉框与日期选择器现在全端统一（触屏不再退回原生控件），菜单在窄屏自动收进视口',

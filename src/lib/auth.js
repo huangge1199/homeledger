@@ -194,7 +194,12 @@ function requireLogin(req, res, next) {
 }
 
 function requireAdmin(req, res, next) {
-  if (!res.locals.user?.is_admin) return res.status(403).render('error', { title: '无权限', message: '仅管理员可访问该页面' });
+  if (!res.locals.user?.is_admin) {
+    if ((req.headers.accept || '').includes('application/json') || req.xhr || (req.path || '').startsWith('/api/')) {
+      return res.status(403).json({ ok: false, error: '需要管理员权限', code: 'FORBIDDEN_ADMIN' });
+    }
+    return res.status(403).render('error', { title: '无权限', message: '仅管理员可访问该页面' });
+  }
   next();
 }
 
@@ -209,19 +214,25 @@ const ROLE_LABEL = { viewer: '只读', member: '成员', admin: '管理员', own
 const canWrite = (role) => (ROLE_RANK[role] || 0) >= ROLE_RANK.member;
 const canManage = (role) => (ROLE_RANK[role] || 0) >= ROLE_RANK.admin;
 
+function _apiJson(res, status, error, code) {
+  return res.status(status).json({ ok: false, error, code });
+}
+
 /** 校验对当前账本的写权限（归档账本只读） */
 function requireLedgerWrite(req, res, next) {
   const m = res.locals.ledger;
-  if (!m) return res.status(400).render('error', { title: '没有账本', message: '请先创建一个账本' });
-  if (m.is_archived) return res.status(403).render('error', { title: '账本已归档', message: '该账本已归档（只读），请先在「账本管理」中恢复后再操作' });
-  if (!canWrite(m.role)) return res.status(403).render('error', { title: '只读权限', message: '你在该账本中只有只读权限，无法进行此操作' });
+  const wantsApi = (req.headers.accept || '').includes('application/json') || req.xhr || (req.path || '').startsWith('/api/');
+  if (!m) return wantsApi ? _apiJson(res, 400, '请先创建账本', 'NO_LEDGER') : res.status(400).render('error', { title: '没有账本', message: '请先创建一个账本' });
+  if (m.is_archived) return wantsApi ? _apiJson(res, 403, '账本已归档（只读），请先在「账本管理」中恢复', 'LEDGER_ARCHIVED') : res.status(403).render('error', { title: '账本已归档', message: '该账本已归档（只读），请先在「账本管理」中恢复后再操作' });
+  if (!canWrite(m.role)) return wantsApi ? _apiJson(res, 403, '你在该账本中只有只读权限', 'FORBIDDEN_WRITE') : res.status(403).render('error', { title: '只读权限', message: '你在该账本中只有只读权限，无法进行此操作' });
   next();
 }
 function requireLedgerManage(req, res, next) {
   const m = res.locals.ledger;
-  if (!m) return res.status(400).render('error', { title: '没有账本', message: '请先创建一个账本' });
-  if (m.is_archived) return res.status(403).render('error', { title: '账本已归档', message: '该账本已归档（只读），请先在「账本管理」中恢复后再操作' });
-  if (!canManage(m.role)) return res.status(403).render('error', { title: '权限不足', message: '需要账本管理员及以上权限' });
+  const wantsApi = (req.headers.accept || '').includes('application/json') || req.xhr || (req.path || '').startsWith('/api/');
+  if (!m) return wantsApi ? _apiJson(res, 400, '请先创建账本', 'NO_LEDGER') : res.status(400).render('error', { title: '没有账本', message: '请先创建一个账本' });
+  if (m.is_archived) return wantsApi ? _apiJson(res, 403, '账本已归档（只读），请先在「账本管理」中恢复', 'LEDGER_ARCHIVED') : res.status(403).render('error', { title: '账本已归档', message: '该账本已归档（只读），请先在「账本管理」中恢复后再操作' });
+  if (!canManage(m.role)) return wantsApi ? _apiJson(res, 403, '需要账本管理员及以上权限', 'FORBIDDEN_MANAGE') : res.status(403).render('error', { title: '权限不足', message: '需要账本管理员及以上权限' });
   next();
 }
 
@@ -241,9 +252,22 @@ function csrfProtect(req, res, next) {
     if ((req.headers.accept || '').includes('application/json')) {
       return res.status(403).json({ ok: false, error: 'CSRF 校验失败，请刷新页面重试' });
     }
-    return res.status(403).render('error', { title: '会话已过期', message: '安全令牌校验失败，请返回上一页刷新后重试。' });
+    // SPA 时代：CSRF 校验失败 → 写 flash 后回到首页；前端 useFlash 会提示用户刷新
+    if (req.session) req.session.flash = { type: 'error', message: '会话已过期，请刷新页面重试。' };
+    const back = safeBack(req.get('referer'));
+    return res.status(403).redirect(back);
   }
   next();
+}
+
+function safeBack(ref) {
+  if (!ref || typeof ref !== 'string') return '/';
+  try {
+    const u = new URL(ref);
+    return u.pathname + u.search;
+  } catch {
+    return '/';
+  }
 }
 
 /* --------------------------------- 通知中心 -------------------------------- */

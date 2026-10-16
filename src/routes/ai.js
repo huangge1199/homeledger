@@ -12,23 +12,11 @@ const router = express.Router();
 
 /* --------------------------------- 页面 ---------------------------------- */
 
-router.get('/ai', auth.requireLogin, (req, res) => {
+router.get('/ai', auth.requireLogin, (req, res, next) => {
   const ledger = res.locals.ledger;
   if (!ledger) return res.redirect('/');
-  const ledgerId = Number(ledger.id);
-  const cfg = ai.getAiConfig();
-  const recent = all(
-    `SELECT a.*, t.amount_cents, t.txn_date, t.merchant, c.name AS category_name, c.icon AS category_icon
-     FROM attachments a LEFT JOIN transactions t ON t.id = a.txn_id
-     LEFT JOIN categories c ON c.id = t.category_id
-     WHERE a.ledger_id = ? ORDER BY a.id DESC LIMIT 12`,
-    ledgerId
-  );
-  res.render('ai', {
-    title: 'AI 截图记账', activeNav: 'ai',
-    cfg, ready: ai.isAiReady(), usable: ai.isAiUsable(), recent,
-    form: fd.txFormData(ledgerId, req.session.userId),
-  });
+  // SPA 时代：交给前端路由 /ai 渲染（数据由 /api/v1/ai/config + /api/v1/attachments 拉取）
+  next();
 });
 
 /* ------------------------------- 截图识别 -------------------------------- */
@@ -227,21 +215,9 @@ router.post('/api/ai/chat', auth.requireLogin, auth.requireLedgerWrite, async (r
 
 /* -------------------------------- 附件操作 -------------------------------- */
 
-router.get('/attachments', auth.requireLogin, (req, res) => {
-  const ledgerId = Number(res.locals.ledger.id);
-  const page = Math.max(1, Number(req.query.page) || 1);
-  const pageSize = 36;
-  const total = Number(get('SELECT COUNT(*) AS c FROM attachments WHERE ledger_id = ?', ledgerId)?.c || 0);
-  const rows = all(
-    `SELECT a.*, t.amount_cents, t.txn_date, t.merchant FROM attachments a
-     LEFT JOIN transactions t ON t.id = a.txn_id
-     WHERE a.ledger_id = ? ORDER BY a.id DESC LIMIT ? OFFSET ?`,
-    ledgerId, pageSize, (page - 1) * pageSize
-  );
-  res.render('attachments', {
-    title: '账单截图', activeNav: 'ai', rows, page,
-    pages: Math.max(1, Math.ceil(total / pageSize)), total,
-  });
+router.get('/attachments', auth.requireLogin, (req, res, next) => {
+  // SPA 时代：交给前端路由 /attachments 渲染（数据由 /api/v1/attachments 拉取）
+  next();
 });
 
 router.post('/attachments/:id/delete', auth.requireLogin, auth.requireLedgerWrite, (req, res) => {

@@ -12,39 +12,11 @@ const router = express.Router();
 
 /* ---------------------------------- 预算 ---------------------------------- */
 
-router.get('/budgets', auth.requireLogin, (req, res) => {
+router.get('/budgets', auth.requireLogin, (req, res, next) => {
   const ledger = res.locals.ledger;
   if (!ledger) return res.redirect('/');
-  const ledgerId = Number(ledger.id);
-  const budgets = all(
-    `SELECT b.*, c.name AS category_name, c.icon AS category_icon, c.parent_id AS category_parent_id, a.name AS account_name
-     FROM budgets b LEFT JOIN categories c ON c.id = b.category_id LEFT JOIN accounts a ON a.id = b.account_id
-     WHERE b.ledger_id = ? ORDER BY b.is_active DESC, b.id`,
-    ledgerId
-  ).map((b) => {
-    const range = sch.budgetPeriodRange(b, new Date());
-    const used = sch.budgetUsedInRange(b, range.start, range.end);
-    const amount = Number(b.amount_cents);
-    // 大分类（parent_id 为空）预算统计该分类及其全部子分类，标注出来避免误解口径
-    const catLabel = b.scope === 'category'
-      ? `分类 · ${b.category_name || '未指定'}${b.category_parent_id === null ? '（整个大分类）' : ''}`
-      : null;
-    return {
-      ...b, used, rangeLabel: range.label,
-      ratio: amount > 0 ? (used / amount) * 100 : 0,
-      remain: amount - used,
-      dailyAllowance: Math.max(0, Math.round((amount - used) / Math.max(1, remainingDays(b, range)))),
-      scopeLabel: b.scope === 'overall' ? '总预算' : catLabel || `账户 · ${b.account_name || '未指定'}`,
-      periodLabel: { monthly: '每月', yearly: '每年', weekly: '每周', custom: '自定义' }[b.period] || '每月',
-    };
-  });
-  const month = todayStr().slice(0, 7);
-  const overall = txn.summary(ledgerId, `${month}-01`, `${month}-31`);
-  const totalBudget = budgets.filter((b) => b.is_active && b.scope === 'overall').reduce((s, b) => s + Number(b.amount_cents), 0);
-  res.render('budgets', {
-    title: '预算管理', activeNav: 'budgets', budgets, form: fd.txFormData(ledgerId, req.session.userId),
-    overall, totalBudget, month,
-  });
+  // SPA 时代：交给前端路由 /budgets 渲染（数据由 /api/v1/planning/budgets 拉取）
+  next();
 });
 
 function remainingDays(b, range) {
@@ -133,35 +105,11 @@ router.post('/budgets/:id/toggle', auth.requireLogin, auth.requireLedgerWrite, (
 
 /* -------------------------------- 周期账单 -------------------------------- */
 
-router.get('/recurring', auth.requireLogin, (req, res) => {
+router.get('/recurring', auth.requireLogin, (req, res, next) => {
   const ledger = res.locals.ledger;
   if (!ledger) return res.redirect('/');
-  const ledgerId = Number(ledger.id);
-  const rules = all(
-    `SELECT r.*, (SELECT COUNT(*) FROM transactions t WHERE t.ledger_id = r.ledger_id AND t.source = 'recurring'
-       AND t.deleted_at IS NULL AND t.note LIKE '%' || r.name || '%') AS posted
-     FROM recurring_rules r WHERE r.ledger_id = ? ORDER BY r.is_active DESC, r.next_run_at`,
-    ledgerId
-  ).map((r) => {
-    const items = sch.ruleItems(r.payload);
-    const cats = fd.flatCategories(ledgerId);
-    const accs = fd.accounts(ledgerId);
-    const total = items.reduce((s, i) => s + Number(i.amount_cents || 0), 0);
-    return {
-      ...r, items, total,
-      freqLabel: { daily: '每天', weekly: '每周', monthly: '每月', yearly: '每年' }[r.frequency] || '每月',
-      itemLabels: items.map((i) => ({
-        ...i,
-        category_path: cats.find((c) => Number(c.id) === Number(i.category_id))?.path || '未分类',
-        account_name: accs.find((a) => Number(a.id) === Number(i.account_id))?.name || '—',
-        type_label: require('../db').TXN_TYPE_MAP[i.type]?.label || i.type,
-      })),
-    };
-  });
-  res.render('recurring', {
-    title: '周期账单', activeNav: 'recurring', rules,
-    form: fd.txFormData(ledgerId, req.session.userId), today: todayStr(),
-  });
+  // SPA 时代：交给前端路由 /recurring 渲染（数据由 /api/v1/planning/recurring 拉取）
+  next();
 });
 
 router.post('/recurring', auth.requireLogin, auth.requireLedgerWrite, (req, res) => {
@@ -245,22 +193,11 @@ router.post('/recurring/:id/delete', auth.requireLogin, auth.requireLedgerWrite,
 
 /* -------------------------------- 借贷台账 -------------------------------- */
 
-router.get('/debts', auth.requireLogin, (req, res) => {
+router.get('/debts', auth.requireLogin, (req, res, next) => {
   const ledger = res.locals.ledger;
   if (!ledger) return res.redirect('/');
-  const ledgerId = Number(ledger.id);
-  const debts = all(
-    `SELECT d.*, a.name AS account_name FROM debts d LEFT JOIN accounts a ON a.id = d.account_id
-     WHERE d.ledger_id = ? ORDER BY d.status DESC, COALESCE(d.due_date, '9999') LIMIT 300`,
-    ledgerId
-  );
-  const open = debts.filter((d) => d.status === 'open');
-  const receivable = open.filter((d) => d.direction === 'receivable').reduce((s, d) => s + Number(d.balance_cents), 0);
-  const payable = open.filter((d) => d.direction === 'payable').reduce((s, d) => s + Number(d.balance_cents), 0);
-  res.render('debts', {
-    title: '借贷台账', activeNav: 'debts', debts, receivable, payable,
-    form: fd.txFormData(ledgerId, req.session.userId), today: todayStr(),
-  });
+  // SPA 时代：交给前端路由 /debts 渲染（数据由 /api/v1/planning/debts 拉取）
+  next();
 });
 
 router.post('/debts', auth.requireLogin, auth.requireLedgerWrite, (req, res) => {
@@ -332,28 +269,11 @@ router.post('/debts/:id/delete', auth.requireLogin, auth.requireLedgerWrite, (re
 
 /* -------------------------------- 储蓄目标 -------------------------------- */
 
-router.get('/goals', auth.requireLogin, (req, res) => {
+router.get('/goals', auth.requireLogin, (req, res, next) => {
   const ledger = res.locals.ledger;
   if (!ledger) return res.redirect('/');
-  const ledgerId = Number(ledger.id);
-  const goals = all(
-    `SELECT g.*, a.name AS account_name FROM goals g LEFT JOIN accounts a ON a.id = g.account_id
-     WHERE g.ledger_id = ? ORDER BY CASE g.status WHEN 'active' THEN 0 ELSE 1 END, g.id`,
-    ledgerId
-  ).map((g) => {
-    const target = Number(g.target_cents);
-    const saved = Number(g.saved_cents);
-    let daysLeft = null;
-    if (g.target_date) daysLeft = Math.round((new Date(`${g.target_date}T00:00:00`) - new Date(`${todayStr()}T00:00:00`)) / 86400000);
-    return {
-      ...g, target, saved,
-      pct: target > 0 ? Math.min(100, (saved / target) * 100) : 0,
-      remain: Math.max(0, target - saved),
-      daysLeft,
-      needPerMonth: daysLeft && daysLeft > 0 ? Math.ceil((target - saved) / Math.max(1, daysLeft / 30)) : null,
-    };
-  });
-  res.render('goals', { title: '储蓄目标', activeNav: 'goals', goals, form: fd.txFormData(ledgerId, req.session.userId) });
+  // SPA 时代：交给前端路由 /goals 渲染（数据由 /api/v1/planning/goals 拉取）
+  next();
 });
 
 router.post('/goals', auth.requireLogin, auth.requireLedgerWrite, (req, res) => {

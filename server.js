@@ -1,7 +1,9 @@
 'use strict';
 /**
  * 家账簿 HomeLedger —— 服务端入口
- * 纯后端：Express + EJS 服务端渲染 + SQLite，零前端框架、零原生依赖
+ * v2.0+：纯后端 JSON API + 静态资源托管。
+ * 前端为 Vue 3 SPA（web/dist），由 SPA fallback 接住所有 GET 路径。
+ * 不再使用 EJS 模板渲染（已退役）。
  */
 const path = require('node:path');
 const express = require('express');
@@ -9,23 +11,12 @@ const session = require('express-session');
 
 const db = require('./src/db');
 const auth = require('./src/lib/auth');
-const util = require('./src/lib/util');
-const charts = require('./src/lib/charts');
 const scheduler = require('./src/lib/scheduler');
+const util = require('./src/lib/util');
 
 const PORT = Number(process.env.PORT || 5111);
 const HOST = process.env.HOST || '0.0.0.0';
 const ROOT = __dirname;
-const APP_VERSION = require('./package.json').version;
-
-/** 静态资源缓存戳：应用版本 + 文件 mtime（36 进制），文件一改就变 */
-function assetStamp(rel) {
-  try {
-    return Math.floor(require('node:fs').statSync(path.join(ROOT, 'public', rel)).mtimeMs / 1000).toString(36);
-  } catch (e) {
-    return '0';
-  }
-}
 
 /* ---------------------------------- 初始化 --------------------------------- */
 
@@ -57,9 +48,7 @@ function bootstrapAdmin() {
 const app = express();
 app.disable('x-powered-by');
 app.set('trust proxy', true);
-app.set('view engine', 'ejs');
-app.set('views', path.join(ROOT, 'src', 'views'));
-
+// SPA 时代：不再配置 EJS view engine（视图文件已退役）
 app.use(express.urlencoded({ extended: false, limit: '30mb' }));
 app.use(express.json({ limit: '30mb' }));
 app.use('/static', express.static(path.join(ROOT, 'public'), { maxAge: '7d' }));
@@ -69,6 +58,19 @@ app.use('/uploads', (req, res, next) => {
   next();
 });
 app.use('/uploads', express.static(path.join(db.DATA_DIR, 'uploads'), { maxAge: '30d' }));
+
+/* ---------- v2 前端构建产物（web/dist） ----------
+ * 阶段 0：仅提供静态文件 + SPA fallback。
+ * 业务 SSR 路由仍可用（仅做向后兼容）；阶段 1 起逐步退役 EJS 视图。 */
+const WEB_DIST = path.join(ROOT, 'web', 'dist');
+const fs = require('node:fs');
+if (fs.existsSync(WEB_DIST)) {
+  app.use(express.static(WEB_DIST, { maxAge: '7d', index: false }));
+  // SPA fallback 留到所有路由之后挂载（在下面"404 兜底"之前），避免抢 API 请求
+  console.log('  🧩 已挂载前端构建产物：' + WEB_DIST);
+} else {
+  console.log('  ⚠️  未检测到 web/dist/，请先 `cd web && npm run build`');
+}
 
 app.use(
   session({
@@ -101,59 +103,17 @@ app.use((req, res, next) => {
 });
 
 app.use((req, res, next) => {
-  res.locals.appVersion = APP_VERSION;
-  // 静态资源版本参数 = 应用版本 + 文件修改时间。
-  // 只用应用版本会在"版本没变但文件改了"时继续命中浏览器缓存（换头像按钮无反应就是这个问题），
-  // 拼上 mtime 后任何一次文件改动都会自动失效旧缓存。
-  res.locals.assetV = {
-    css: APP_VERSION + '-' + assetStamp('css/app.css'),
-    js: APP_VERSION + '-' + assetStamp('js/app.js'),
-    assistant: APP_VERSION + '-' + assetStamp('js/assistant.js'),
-  };
-  res.locals.helpers = util;
-  res.locals.charts = charts;
-  res.locals.TXN_TYPES = db.TXN_TYPES;
-  res.locals.TXN_TYPE_MAP = db.TXN_TYPE_MAP;
-  res.locals.PRIMARY_TXN_TYPES = db.PRIMARY_TXN_TYPES;
-  res.locals.ACCOUNT_TYPES = db.ACCOUNT_TYPES;
-  res.locals.ACCOUNT_TYPE_MAP = db.ACCOUNT_TYPE_MAP;
-  res.locals.ROLE_LABEL = auth.ROLE_LABEL;
-  res.locals.canWrite = auth.canWrite;
-  res.locals.canManage = auth.canManage;
-  res.locals.siteName = db.getSetting('site.name', '家账簿');
-  res.locals.baseCurrency = db.getSetting('site.currency', 'CNY');
-  res.locals.today = db.todayStr();
-  res.locals.now = db.nowStr();
-  res.locals.activeNav = '';
-  res.locals.aiUsable = require('./src/lib/ai').isAiUsable();
-  next();
-});
-
-/**
- * 零依赖布局机制：视图先渲染成 body，再套进 layout.ejs
- * （传 { layout: false } 可关闭；传 { layout: 'layout-blank' } 换壳）
- */
-app.use((req, res, next) => {
-  const rawRender = res.render.bind(res);
-  res.render = function render(view, options, cb) {
-    if (typeof options === 'function') { cb = options; options = {}; }
-    const opts = options || {};
-    const layout = opts.layout === undefined ? 'layout' : opts.layout;
-    if (!layout) return rawRender(view, opts, cb);
-    rawRender(view, opts, (err, html) => {
-      if (err) return cb ? cb(err) : next(err);
-      rawRender(layout, { ...opts, body: html }, (err2, full) => {
-        if (err2) return cb ? cb(err2) : next(err2);
-        if (cb) return cb(null, full);
-        res.send(full);
-      });
-    });
-  };
+  // SPA 时代：不再注入 res.locals（视图已退役）
   next();
 });
 
 /** 开放 API（小龙虾等外部工具）：Bearer 令牌鉴权，不走会话与 CSRF，需在 csrfProtect 之前挂载 */
 app.use('/api/open', require('./src/routes/openapi'));
+
+/** v1 JSON API（阶段 1：自研 SPA 前端专用；保留 /api/open 兼容外部工具）
+ *  注意：/api/v1 故意挂在 csrfProtect 之前，让 SPA 通过 Bearer 风格的鉴权+CSRF 豁免来对接。
+ *  当前 v1 仍走 cookie session；CSRF 保护由客户端 axios 从 cookie/header 注入（meta csrf）。 */
+app.use('/api/v1', require('./src/routes/apiV1'));
 
 app.use(auth.csrfProtect);
 
@@ -192,18 +152,23 @@ app.use('/', require('./src/routes/about'));
 
 /* --------------------------------- 错误处理 -------------------------------- */
 
-app.use((req, res) => {
-  res.status(404).render('error', { title: '页面不存在', message: `找不到 ${req.path}，可能是链接已失效。` });
+/** SPA fallback：未被任何路由匹配的 GET 路径返回 index.html（让前端路由接管）
+ *  必须在所有 API 路由之后挂载，否则会抢 /api/v1/* 的响应。 */
+app.use((req, res, next) => {
+  if (req.method !== 'GET') return next();
+  if ((req.path || '').startsWith('/api/')) {
+    return res.status(404).json({ ok: false, error: `API 端点不存在：${req.method} ${req.originalUrl}`, code: 'NOT_FOUND' });
+  }
+  if (!fs.existsSync(WEB_DIST)) return res.status(503).send('前端未构建，请先 `cd web && npm run build`');
+  res.sendFile(path.join(WEB_DIST, 'index.html'), (err) => { if (err) next(); });
 });
 
+/** 全局错误处理：统一返 JSON，避免模板引擎错误。 */
 app.use((err, req, res, _next) => {
   console.error('[error]', err);
   const status = Number(err.status || err.statusCode) >= 400 ? Number(err.status || err.statusCode) : 500;
   const message = err?.message || '服务器内部错误';
-  if ((req.headers.accept || '').includes('application/json') || req.xhr) {
-    return res.status(status).json({ ok: false, error: message });
-  }
-  res.status(status).render('error', { title: '出错了', message });
+  res.status(status).json({ ok: false, error: message, code: 'INTERNAL' });
 });
 
 /* ---------------------------------- 启动 ---------------------------------- */
