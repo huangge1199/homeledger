@@ -116,7 +116,8 @@ export const useSessionStore = defineStore('session', {
       }
     },
     async switchLedger(ledgerId: number) {
-      const fd = new FormData()
+      // 同 logout：必须 urlencoded，FormData 走 multipart 后端解析不到 ledger_id
+      const fd = new URLSearchParams()
       fd.append('ledger_id', String(ledgerId))
       fd.append('back', window.location.pathname + window.location.search)
       const csrf = this.csrf
@@ -133,13 +134,21 @@ export const useSessionStore = defineStore('session', {
     },
     async logout() {
       try {
-        const fd = new FormData()
+        // 必须用 application/x-www-form-urlencoded：FormData 走 multipart，
+        // 后端 express.urlencoded 不会解析 multipart，CSRF 校验就拿不到 _csrf
+        const fd = new URLSearchParams()
         fd.append('_csrf', this.csrf)
-        await fetch('/logout', { method: 'POST', body: fd, credentials: 'include' })
+        await fetch('/logout', {
+          method: 'POST',
+          body: fd,
+          credentials: 'include',
+          redirect: 'follow',
+        })
       } catch { /* ignore */ }
       this.user = null
       this.currentLedger = null
       this.ledgers = []
+      this.csrf = ''
     },
   },
 })
