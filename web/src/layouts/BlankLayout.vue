@@ -4,7 +4,9 @@
 
 <template>
   <div class="blank">
-    <RouterView />
+    <!-- 视图组件（Login/Setup/Register/Join）把内容作为 slot 传入；
+         此处不能用 <RouterView/>：顶层路由下没有子路由，会渲染成空注释导致整页空白 -->
+    <slot />
   </div>
 </template>
 

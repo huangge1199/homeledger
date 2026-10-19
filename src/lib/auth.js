@@ -252,10 +252,10 @@ function csrfProtect(req, res, next) {
     if ((req.headers.accept || '').includes('application/json')) {
       return res.status(403).json({ ok: false, error: 'CSRF 校验失败，请刷新页面重试' });
     }
-    // SPA 时代：CSRF 校验失败 → 写 flash 后回到首页；前端 useFlash 会提示用户刷新
+    // SPA 时代：CSRF 校验失败 → 写 flash 后回到来源页；前端 useFlash 会提示用户刷新
     if (req.session) req.session.flash = { type: 'error', message: '会话已过期，请刷新页面重试。' };
     const back = safeBack(req.get('referer'));
-    return res.status(403).redirect(back);
+    return res.redirect(403, back);
   }
   next();
 }

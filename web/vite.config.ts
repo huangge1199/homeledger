@@ -17,7 +17,19 @@ export default defineConfig({
     proxy: {
       '/api':    { target: 'http://localhost:5111', changeOrigin: true },
       '/uploads':{ target: 'http://localhost:5111', changeOrigin: true },
-    }
+      // SSR 兼容端点（登录/注册/初始化/切账本/登出）只有 POST，
+      // 非 GET 请求转发到后端；GET 是前端路由，bypass 回原路径让 Vite 继续提供开发版页面
+      ...Object.fromEntries(
+        ['/login', '/register', '/setup', '/join', '/logout', '/ledgers/switch'].map((p) => [
+          p,
+          {
+            target: 'http://localhost:5111',
+            changeOrigin: true,
+            bypass: (req) => (req.method === 'GET' || req.method === 'HEAD' ? req.url : undefined)
+          }
+        ])
+      )
+    },
   },
   build: {
     outDir: 'dist',

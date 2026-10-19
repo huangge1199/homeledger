@@ -45,7 +45,7 @@ router.post('/login', (req, res) => {
   if (locked) {
     res.flash('error', `尝试次数过多，请在 ${locked} 分钟后重试。`);
     const qs = new URLSearchParams({ next }).toString();
-    return res.status(429).redirect(`/login?${qs}`);
+    return res.redirect(429, `/login?${qs}`);
   }
   const user = get('SELECT * FROM users WHERE username = ?', username);
   if (!user || user.status !== 'active' || !auth.verifyPassword(password, user.password_hash)) {
@@ -53,7 +53,7 @@ router.post('/login', (req, res) => {
     auth.audit(req, 'login.fail', { entity: 'user', detail: username });
     res.flash('error', '用户名或密码不正确。');
     const qs = new URLSearchParams({ next, u: username }).toString();
-    return res.status(401).redirect(`/login?${qs}`);
+    return res.redirect(401, `/login?${qs}`);
   }
   auth.clearFailures(req, username);
   req.session.regenerate((err) => {
@@ -93,7 +93,7 @@ router.get('/register', (req, res, next) => {
 router.post('/register', (req, res) => {
   if (String(getSetting('site.allow_register', 'false')) !== 'true') {
     res.flash('error', '本站未开放自助注册。');
-    return res.status(403).redirect('/login');
+    return res.redirect(403, '/login');
   }
   const username = String(req.body.username || '').trim();
   const displayName = String(req.body.display_name || '').trim() || username;
@@ -105,7 +105,7 @@ router.post('/register', (req, res) => {
     const qs = new URLSearchParams({
       u: username, d: displayName, e: email || '',
     }).toString();
-    return res.status(400).redirect(`/register?${qs}`);
+    return res.redirect(400, `/register?${qs}`);
   };
 
   if (!USERNAME_RE.test(username)) return fail('用户名需 3–32 位，仅支持字母、数字、下划线、点、@ 和短横线。');
@@ -148,7 +148,7 @@ router.post('/setup', (req, res) => {
   const fail = (error) => {
     res.flash('error', error);
     const qs = new URLSearchParams({ u: username, d: displayName, s: siteName }).toString();
-    return res.status(400).redirect(`/setup?${qs}`);
+    return res.redirect(400, `/setup?${qs}`);
   };
 
   if (!USERNAME_RE.test(username)) return fail('用户名需 3–32 位，仅支持字母、数字、下划线、点、@ 和短横线。');

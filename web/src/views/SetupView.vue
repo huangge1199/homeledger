@@ -36,8 +36,9 @@ onMounted(async () => {
   }
 })
 
-function getMetaCsrf() {
-  return (document.querySelector('meta[name="csrf"]') as HTMLMetaElement | null)?.content || ''
+function getCsrf(): string {
+  return session.csrf
+    || (document.querySelector('meta[name="csrf"]') as HTMLMetaElement | null)?.content || ''
 }
 
 async function onSubmit() {
@@ -62,7 +63,7 @@ async function onSubmit() {
     body.set('password2', password2.value)
     body.set('display_name', displayName.value || username.value)
     body.set('site_name', siteName.value || '家账簿')
-    body.set('_csrf', getMetaCsrf())
+    body.set('_csrf', getCsrf())
     const res = await api.post('/setup', body, {
       baseURL: '/',
       maxRedirects: 0,
