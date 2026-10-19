@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, h, ref, watch } from 'vue'
-import { useRoute, useRouter, RouterView, RouterLink } from 'vue-router'
+import { useRoute, useRouter, RouterLink } from 'vue-router'
 import {
   NLayout, NLayoutHeader, NLayoutSider, NLayoutContent, NMenu, NButton, NIcon,
   NDropdown, NAvatar, NSpace, NText, NTag, type MenuOption, type DropdownOption,
@@ -350,7 +350,8 @@ watch(() => route.path, () => { drawerOpen.value = false })
             </div>
           </div>
         </div>
-        <RouterView v-else />
+        <!-- 页面内容由各视图通过默认插槽传入（AppShell 不再内嵌 RouterView） -->
+        <slot v-else />
       </NLayoutContent>
     </NLayout>
 
