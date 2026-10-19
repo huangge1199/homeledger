@@ -24,7 +24,8 @@ function readListFilter(query) {
     from:          query.from || '',
     to:            query.to || '',
     keyword:       query.q || '',
-    reimbursable:  query.reimbursable || '',
+    // URL 写 1 / true / yes 都映射到 yes；'' / undefined 为空
+    reimbursable:  ['1', 'true', 'yes'].includes(String(query.reimbursable)) ? 'yes' : (query.reimbursable || ''),
     sort:          query.sort || 'date_desc',
     page:          Math.max(1, Number(query.page) || 1),
     pageSize:      Math.min(200, Math.max(10, Number(query.pageSize) || 40)),
@@ -64,7 +65,7 @@ function readForm(body) {
 /* ----------------------------- 列表 ----------------------------- */
 router.get('/', auth.requireLogin, api.asyncHandler((req, res) => {
   const ledger = res.locals.ledger;
-  if (!ledger) return api.ok(res, { items: [], total: 0, page: 1, pageSize: 40, totalPages: 0 });
+  if (!ledger) return api.ok(res, { items: [], total: 0, page: 1, pageSize: 40, totalPages: 0, sum: { income: 0, expense: 0 } });
   const f = readListFilter(req.query);
   const result = txn.listTransactions(Number(ledger.id), f);
   api.ok(res, {
@@ -73,6 +74,7 @@ router.get('/', auth.requireLogin, api.asyncHandler((req, res) => {
     page: f.page,
     pageSize: f.pageSize,
     totalPages: result.pages,
+    sum: result.sum,
     groups: txn.groupByDate(result.rows),
   });
 }));

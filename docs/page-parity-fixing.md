@@ -68,8 +68,8 @@ A1 已修复内容：
 | # | 页面 | 旧文件 | 新文件 | 状态 | 差异备注 |
 |---|---|---|---|---|---|
 | B1 | 总览 | `dashboard.ejs` | `DashboardView.vue` | 已确认 | 见下方修复清单 |
-| B2 | 记一笔 / 编辑 | `txn-form.ejs` | `TxnFormView.vue` | 待确认 | 见下方修复清单 | |
-| B3 | 账单明细 | `transactions.ejs` | `TransactionsView.vue` | 待修 | |
+| B2 | 记一笔 / 编辑 | `txn-form.ejs` | `TxnFormView.vue` | 已确认 | 见下方修复清单；2026-10-19 补 3 处小修（行距/开关/分类浮层）已并入确认 |
+| B3 | 账单明细 | `transactions.ejs` | `TransactionsView.vue` | 待确认 | 见下方修复清单 |
 | B4 | 记录详情 | — | `TxnDetailView.vue` | 待修 | 新增页，重点核字段与附件展示 |
 | B5 | 记账日历 | `calendar.ejs` | `CalendarView.vue` | 待修 | |
 | B6 | AI 截图记账 | `ai.ejs` | `AiView.vue` | 待修 | |
@@ -142,6 +142,43 @@ B1 第二轮修复（用户截图反馈后）：
 | 9 | 缺统计口径提示 | 底部补固定提示：转账 / 借贷 / 投资买卖不计入收支统计，只影响账户余额 |
 
 顺带修一处：编辑回填的局部变量 `const t = data.txn` 与新增的响应式 `const t = ref(...)` 同名遮蔽，已改名 `tx`。
+
+#### B3 账单明细修复
+
+后端能力齐备（`txn.listTransactions` 已返回 `sum`、列表 SELECT 已 JOIN member/tag/source/status 等所有展示字段），缺的是前端消费 + 一处后端路由透传。
+
+| # | 问题 | 改法 |
+|---|---|---|
+| 1 | 后端 list API 不返回 `sum` | `api.v1.transactions.js` list 透传 `result.sum`；无账本占位也补 sum: { income: 0, expense: 0 } 兜底 |
+| 2 | `reimbursable` URL 参数不匹配 | `readListFilter` 加映射：`1/true/yes` 全部归一化为 `yes`（与老版 SSR 条件一致） |
+| 3 | 缺时间快选 chips（全部/本月/近7/近30/今年） | `timeChips` 数组 + `apply()`；近 7/30 天用 dayjs 算 `from`/`to`；今年用当年起止 |
+| 4 | 缺类型快选 chips（不限/只支出/只收入/只转账/待报销/AI/导入/订阅） | `kindChips` 数组，状态互斥；其中「待报销/AI/导入/订阅」是 toggle 式（点中再点取消） |
+| 5 | 缺成员筛选 | 加 `memberId` ref + `memberOptions`，`formData().members` 取 `user_id/display_name` |
+| 6 | 缺排序筛选（最新/最早/金额升降） | 加 `sort` ref + `sortOptions`；默认 `date_desc` 不上 URL |
+| 7 | 缺汇总行（笔数/支出/收入/结余） | `list.sum` 渲染；用 `AmountDisplay` 保证符号/色彩与列表内一致；结余按正负切换 income/expense 色 |
+| 8 | 缺分页 | `page` ref + URL 同步；「上一页 / N / M / 下一页」三段式 |
+| 9 | 缺「清空筛选」入口 | `hasFilter` computed + 顶栏按钮，一键还原全部条件 |
+| 10 | 批量条缺「报销入账 + 入账账户」 | `reimburseAccountId` + `bulkReimburse`；未选账户时由后端回落到账本默认账户 |
+| 11 | 行内编辑/删除按钮 | `TxnList` 新增 `show-actions` prop + `act` 区（hover 显示），点击事件不冒泡到行点击 |
+| 12 | 列表行缺 member / 标签 / source 徽标 / 待入账 | `TxnList` 补齐：`member_name`、源 chip map（AI/导入/周期/订阅）、`status=pending` 徽标、可报销徽标 |
+| 13 | 转账/投资类行缺双边账户显示 | `sub` 区分 `is_transfer / invest_buy / invest_sell` → `账户A → 账户B`，与老版 txn-list.ejs 一致 |
+| 14 | 多币种行缺币种后缀 | `amount-col` 下挂 `cur`，仅 `currency !== 'CNY'` 时显示 |
+| 15 | 同比「收支差」delta 取错基线 | 原版用 `cur.income - prev.income` 作 delta 显示但加了 `reverse-delta` 自相矛盾；改为「本月支出 vs 上月支出」环比，且只在锁定到某月时显示 |
+
+行为细节：
+
+- `txFormData().members` 后端是 `[{ user_id, display_name, role, ... }]`，前端 map 为 `{ id, name }`
+- 同比只在「按月筛选」时拉，避免全选/近 7 天场景下误导
+- URL 同步去掉默认值（`page=1 / sort=date_desc / reimbursable=0`），链接更短
+- 行内按钮在非批量模式下 hover 才显示，批量模式隐藏避免误点
+
+**B2 修复补充（2026-10-19 截图反馈后小修）**
+
+| # | 问题 | 改法 | 影响文件 |
+|---|---|---|---|
+| 1 | 表单字段行距不统一 | 主表单行距 20px → 10px；多币种折叠区按同值同步；可报销行后离间距缩小 | `TxnFormView.vue` |
+| 2 | 可报销开关右对齐、文字独占一行 | 改用 `field-row`（横向 flex），开关靠左、文字在右侧 10px 间距，容器宽度不再 100% 拉伸 | `TxnFormView.vue` |
+| 3 | 分类浮层背景透明 | `NPopover` 开了 `raw` 不渲染外壳，给 `.cat-panel` 补背景 / 边框 / 圆角 / 阴影 | `CategorySelect.vue` |
 
 ---
 
@@ -227,3 +264,5 @@ B1 第二轮修复（用户截图反馈后）：
 | 2026-10-19 | B1 | 总览页第一轮 11 项（详见上表），布局改左 2 右 1 两列 |
 | 2026-10-19 | B1-2 | 第二轮 7 项（12~18）。重点：修复三图表组件 `height` 类型判断 bug —— 此前**全站图表均为空白**。**已确认** |
 | 2026-10-19 | A2 | **全局阻断**：`AppShell` 内嵌 `<RouterView>` 致所有页面内容区空白，改为 `<slot>`。属架构遗留缺陷，非对等修复范畴 |
+| 2026-10-19 | B2+ | 截图反馈 3 处小修：表单行距统一 10px、可报销开关改横排、分类浮层补背景 |
+| 2026-10-19 | B3 | 账单明细 15 项（详见上表），含后端 `sum` 透传、`reimbursable=1` 归一化、chips/汇总/分页/筛选/批量报销/行内按钮全量补齐。**待确认** |

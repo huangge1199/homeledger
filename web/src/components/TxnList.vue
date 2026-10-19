@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { NCheckbox, NTag, NText } from 'naive-ui'
+import { NCheckbox, NTag, NText, NButton, NPopconfirm, NSpace } from 'naive-ui'
 import AmountDisplay from './AmountDisplay.vue'
 import Empty from './Empty.vue'
 import dayjs from 'dayjs'
@@ -14,6 +14,7 @@ export interface TxnItem {
   type_label?: string
   type_icon?: string
   amount_cents: number
+  currency?: string
   is_expense?: boolean
   is_income?: boolean
   is_transfer?: boolean
@@ -27,7 +28,9 @@ export interface TxnItem {
   to_account_name?: string
   merchant?: string
   note?: string
-  tags?: string
+  /** 后端原始：空格分隔的标签名（与老版 txn-list.ejs 对齐） */
+  tag_names?: string
+  member_name?: string
   status?: 'pending' | 'cleared'
   is_reimbursable?: number
   source?: string
@@ -48,12 +51,16 @@ interface Props {
   selected?: number[]
   /** 紧凑模式（行高更小） */
   dense?: boolean
+  /** 是否显示行内编辑/删除按钮（与老版 txn-act 对齐） */
+  showActions?: boolean
 }
-const props = withDefaults(defineProps<Props>(), { bulk: false, dense: false })
+const props = withDefaults(defineProps<Props>(), { bulk: false, dense: false, showActions: true })
 const emit = defineEmits<{
   'update:selected': [ids: number[]]
   'click-item': [item: TxnItem]
   'click-day': [date: string]
+  'edit': [item: TxnItem]
+  'delete': [item: TxnItem]
 }>()
 
 const tagList = (s: string | undefined): string[] => {
@@ -100,6 +107,21 @@ const weekday = computed(() => (d: string) => {
 function itemTime(t: TxnItem) {
   return t.txn_time || ''
 }
+
+/** source → 老版 chip 标签（与 txn-list.ejs 43-61 行同源） */
+const sourceLabel: Record<string, string> = {
+  ai_screenshot: 'AI',
+  ai_text: 'AI',
+  import: '导入',
+  recurring: '周期',
+  subscription: '订阅',
+}
+function sourceChip(s?: string) {
+  return s ? sourceLabel[s] || '' : ''
+}
+function isPrimarySource(s?: string) {
+  return s === 'ai_screenshot' || s === 'ai_text' || s === 'subscription'
+}
 </script>
 
 <template>
@@ -129,22 +151,33 @@ function itemTime(t: TxnItem) {
           <div class="ico" :style="{ background: categoryBg(t.category_color) }">{{ t.category_icon || t.type_icon || '·' }}</div>
           <div class="main">
             <div class="title">
-              <span v-if="t.category_id && t.type !== 'transfer'">{{ t.category_name || t.type_label }}</span>
+              <!-- 分类名（点击按该分类筛选，转账无分类语义保持纯文本） -->
+              <span v-if="t.category_id && t.type !== 'transfer'" class="cat-name">{{ t.category_name || t.type_label }}</span>
               <span v-else>{{ t.type === 'transfer' ? '转账' : (t.category_name || t.type_label || '未分类') }}</span>
               <NText v-if="t.category_parent && t.type !== 'transfer'" depth="3" class="parent">{{ t.category_parent }}</NText>
-              <NText v-if="t.merchant" depth="2" class="merchant">{{ t.merchant }}</NText>
+              <NText v-if="t.merchant" depth="2" class="merchant">@{{ t.merchant }}</NText>
               <NTag v-if="t.attachment_count" size="tiny" :bordered="false" type="info">📎 {{ t.attachment_count }}</NTag>
             </div>
-            <div v-if="t.note || t.tags" class="sub">
-              <NText v-if="t.note" depth="3" class="note">{{ t.note }}</NText>
-              <NText v-if="t.tags" depth="3" class="tags">
-                <template v-for="(tg, i) in tagList(t.tags)" :key="i">
-                  <span class="tag">#{{ tg }}</span>
-                </template>
+            <div v-if="t.note || t.tag_names || t.member_name || t.is_reimbursable || t.status === 'pending' || sourceChip(t.source)" class="sub">
+              <!-- 转账/投资类显示双边账户 -->
+              <NText v-if="t.is_transfer || t.type === 'invest_buy' || t.type === 'invest_sell'" depth="3" class="acc-pair">
+                {{ t.account_name || '—' }} → {{ t.to_account_name || '—' }}
               </NText>
+              <NText v-else-if="t.account_name" depth="3" class="acc">{{ t.account_name }}</NText>
+              <template v-if="t.member_name">
+                <span class="sep">·</span>
+                <NText depth="3" class="member">{{ t.member_name }}</NText>
+              </template>
+              <template v-for="(tg, i) in tagList(t.tag_names)" :key="i">
+                <NTag size="tiny" :bordered="false" type="primary" class="tag">{{ tg }}</NTag>
+              </template>
+              <NTag v-if="t.is_reimbursable" size="tiny" :type="t.status === 'pending' ? 'warning' : 'success'" :bordered="false">待报销</NTag>
+              <NTag v-else-if="t.status === 'pending'" size="tiny" :bordered="false">待入账</NTag>
+              <NTag v-if="sourceChip(t.source)" size="tiny" :type="isPrimarySource(t.source) ? 'primary' : 'default'" :bordered="false">{{ sourceChip(t.source) }}</NTag>
+              <NText v-if="t.note" depth="3" class="note">{{ t.note }}</NText>
             </div>
           </div>
-          <div class="amount">
+          <div class="amount-col">
             <span v-if="t.type === 'transfer'" class="transfer">→</span>
             <AmountDisplay
               v-else
@@ -152,14 +185,25 @@ function itemTime(t: TxnItem) {
               :tone="t.is_expense ? 'expense' : t.is_income ? 'income' : 'neutral'"
               :sign="t.is_income || t.is_expense"
             />
-            <div v-if="t.is_transfer && t.account_name && t.to_account_name" class="acc-pair">
-              {{ t.account_name }} → {{ t.to_account_name }}
-            </div>
-            <div v-else class="acc">
-              <span v-if="t.account_name">{{ t.account_name }}</span>
-              <span v-if="t.account_name && itemTime(t)" class="dot-sep">·</span>
-              <span v-if="itemTime(t)" class="time">{{ itemTime(t) }}</span>
-            </div>
+            <NText v-if="t.currency && t.currency !== 'CNY'" depth="3" class="cur">{{ t.currency }}</NText>
+          </div>
+          <!-- 行内操作：与老版 .txn-act 同构（编辑 + 删除） -->
+          <div v-if="showActions && !bulk" class="act" @click.stop>
+            <NButton size="tiny" quaternary title="编辑" aria-label="编辑" @click="emit('edit', t)">
+              <span class="ico-btn">✏️</span>
+            </NButton>
+            <NPopconfirm
+              positive-text="删除"
+              negative-text="取消"
+              @positive-click="emit('delete', t)"
+            >
+              <template #trigger>
+                <NButton size="tiny" quaternary type="error" title="删除" aria-label="删除">
+                  <span class="ico-btn">🗑️</span>
+                </NButton>
+              </template>
+              确定要删除「{{ t.merchant || t.category_name || t.type_label || '这条记录' }}」吗？
+            </NPopconfirm>
           </div>
         </div>
       </div>
@@ -174,6 +218,7 @@ function itemTime(t: TxnItem) {
   display:flex; align-items:center; gap:8px;
   padding: 8px 4px 4px;
   font-size: 13px; color: var(--hl-text-2, #45516a);
+  cursor: default;
 }
 .day-head .bold { font-weight: 600; }
 .day-head .wd   { font-size: 11px; }
@@ -198,17 +243,23 @@ function itemTime(t: TxnItem) {
   width: 34px; height: 34px; border-radius: 8px;
   display:flex; align-items:center; justify-content:center;
   font-size: 16px;
+  flex: 0 0 auto;
 }
 .main  { flex: 1; min-width: 0; }
-.title { display:flex; align-items:center; gap:8px; font-size: 14px; flex-wrap: wrap; }
+.title { display:flex; align-items:center; gap:6px; font-size: 14px; flex-wrap: wrap; line-height: 1.4; }
+.title .cat-name { font-weight: 500; }
 .title .parent   { font-size: 12px; }
 .title .merchant { font-size: 12px; }
-.sub  { display:flex; gap: 8px; align-items:center; font-size: 12px; margin-top: 2px; flex-wrap: wrap; }
-.sub .tag { margin-right: 4px; color: var(--hl-primary, #3d6df5); }
-.amount { text-align: right; font-size: 14px; min-width: 80px; }
-.amount .transfer { color: var(--hl-muted); }
-.acc, .acc-pair { font-size: 11px; color: var(--hl-muted); margin-top: 2px; }
-/* 消费时刻：等宽数字保证纵向对齐 */
-.acc .time { font-variant-numeric: tabular-nums; }
-.acc .dot-sep { margin: 0 4px; }
+.sub  { display:flex; gap: 6px; align-items:center; font-size: 12px; margin-top: 3px; flex-wrap: wrap; line-height: 1.4; }
+.sub .acc, .sub .acc-pair, .sub .member, .sub .note { font-size: 12px; }
+.sub .tag { font-size: 11px; }
+.sub .sep { color: var(--hl-muted, #b8bfc9); margin: 0 1px; }
+.amount-col { text-align: right; min-width: 80px; display: flex; flex-direction: column; align-items: flex-end; gap: 2px; flex: 0 0 auto; }
+.amount-col .transfer { color: var(--hl-muted); font-size: 16px; }
+.amount-col .cur { font-size: 10px; }
+
+/* 行内操作 */
+.act { display: flex; gap: 2px; flex: 0 0 auto; opacity: 0; transition: opacity .15s; }
+.row:hover .act, .row:focus-within .act { opacity: 1; }
+.ico-btn { font-size: 13px; line-height: 1; }
 </style>
