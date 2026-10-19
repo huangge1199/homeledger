@@ -18,8 +18,10 @@ router.use(auth.csrfProtect);
 
 // 当前会话信息（无登录返 200 ok=false，方便前端判别场景）
 router.get('/session', (req, res) => {
+  const u = res.locals.user || null;
   api.ok(res, {
-    user: res.locals.user || null,
+    // 前端 store 按 camelCase 消费（见 web/src/stores/session.ts），此处补齐别名
+    user: u ? { ...u, displayName: u.display_name || u.username } : null,
     ledger: res.locals.ledger || null,
     ledgers: res.locals.ledgers || [],
     csrf: auth.csrfToken(req),

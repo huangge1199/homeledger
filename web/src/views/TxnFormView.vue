@@ -4,9 +4,10 @@ import { useRoute, useRouter } from 'vue-router'
 import dayjs from 'dayjs'
 import {
   NCard, NForm, NFormItem, NInput, NInputNumber, NButton, NSpace, NSelect, NText, NTag, NCheckbox,
-  NDivider, NPopconfirm, NSpin, NSwitch, NAlert, NTimePicker,
+  NDivider, NPopconfirm, NSpin, NSwitch, NAlert, NTimePicker, NCollapse, NCollapseItem,
 } from 'naive-ui'
 import { useMessage } from 'naive-ui'
+import { RouterLink } from 'vue-router'
 
 import AppShell from '@/layouts/AppShell.vue'
 import PageHead from '@/components/PageHead.vue'
@@ -49,6 +50,13 @@ const note = ref<string>('')
 const tags = ref<string[]>([])
 const isReimbursable = ref<boolean>(false)
 const status = ref<'pending' | 'cleared'>('cleared')
+const currency = ref<string>('CNY')
+const rate = ref<string>('1')
+/** AA 分账行：成员名 + 金额（元） */
+interface SplitRow { name: string; amount: string }
+const splits = ref<SplitRow[]>([])
+
+const CURRENCIES = ['CNY', 'USD', 'EUR', 'HKD', 'JPY', 'GBP', 'KRW', 'SGD', 'AUD', 'CAD', 'TWD']
 
 // 表单选项
 const loading = ref(true)
@@ -70,8 +78,61 @@ const needsCategory = computed(() => {
   return type.value !== 'transfer' && type.value !== 'adjust'
 })
 const needsToAccount = computed(() => {
-  return type.value === 'transfer'
+  return ['transfer', 'invest_buy', 'invest_sell'].includes(type.value)
 })
+
+/** 账户字段标签随类型变化（与老版 acc-label 逻辑一致） */
+const accountLabel = computed(() => {
+  switch (type.value) {
+    case 'expense': return '支付账户'
+    case 'income': return '收款账户'
+    case 'transfer': return '从账户'
+    case 'lend': return '从哪个账户借出'
+    case 'borrow': return '收到哪个账户'
+    case 'repay_receive': return '收款账户'
+    case 'repay_pay': return '付款账户'
+    case 'invest_buy': return '付款账户'
+    case 'invest_sell': return '收款账户'
+    default: return '账户'
+  }
+})
+
+/** 编辑模式回填用的元信息与截图 */
+const t = ref<{ memberName?: string }>({})
+const meta = ref<{ created_at?: string; updated_at?: string; source?: string }>({})
+const images = ref<{ id: number; url: string; size?: number; created_at?: string }[]>([])
+
+function fmtDateTime(s?: string) {
+  if (!s) return '—'
+  const d = dayjs(s)
+  return d.isValid() ? d.format('YYYY-MM-DD HH:mm:ss') : s
+}
+function fmtSize(n?: number) {
+  return `${Math.round((n || 0) / 1024)} KB`
+}
+
+function addSplit() {
+  splits.value.push({ name: '', amount: '' })
+}
+function removeSplit(i: number) {
+  splits.value.splice(i, 1)
+}
+/** 按人数均摊：总额平分为 N 份，余额补到第一行 */
+function splitAverage() {
+  const n = splits.value.length
+  if (!n) return
+  const total = Number(String(amount.value).replace(/[,\s¥￥$]/g, ''))
+  if (!total || total <= 0) {
+    message.warning('请先填写金额')
+    return
+  }
+  const cents = Math.round((total / n) * 100)
+  let remain = Math.round(total * 100)
+  splits.value.forEach((r, i) => {
+    const c = i === 0 ? remain - cents * (n - 1) : cents
+    r.amount = (c / 100).toFixed(2)
+  })
+}
 const showReimbursable = computed(() => {
   return ['expense', 'fee', 'repay_pay'].includes(type.value)
 })
@@ -108,19 +169,33 @@ async function load() {
     // 编辑模式：拉单笔
     if (mode.value === 'edit' && editingId.value) {
       const data = await TransactionsApi.get(editingId.value)
-      const t = data.txn
-      type.value = t.type || 'expense'
-      amount.value = (Number(t.amount_cents || 0) / 100).toFixed(2)
-      date.value = t.txn_date
-      time.value = t.txn_time ? dayjs(`2000-01-01T${t.txn_time}`).valueOf() : null
-      accountId.value = t.account_id
-      toAccountId.value = t.to_account_id
-      categoryId.value = t.category_id
-      merchant.value = t.merchant || ''
-      note.value = t.note || ''
-      tags.value = t.tags ? String(t.tags).split(/[,，\s]+/).filter(Boolean) : []
-      isReimbursable.value = !!t.is_reimbursable
-      status.value = t.status || 'cleared'
+      const tx = data.txn
+      t.value = { memberName: tx.member_name || '' }
+      type.value = tx.type || 'expense'
+      amount.value = (Number(tx.amount_cents || 0) / 100).toFixed(2)
+      date.value = tx.txn_date
+      time.value = tx.txn_time ? dayjs(`2000-01-01T${tx.txn_time}`).valueOf() : null
+      accountId.value = tx.account_id
+      toAccountId.value = tx.to_account_id
+      categoryId.value = tx.category_id
+      merchant.value = tx.merchant || ''
+      note.value = tx.note || ''
+      tags.value = tx.tags ? String(tx.tags).split(/[,，\s]+/).filter(Boolean) : []
+      isReimbursable.value = !!tx.is_reimbursable
+      status.value = tx.status || 'cleared'
+      currency.value = tx.currency || 'CNY'
+      rate.value = String(tx.rate || 1)
+      meta.value = { created_at: tx.created_at, updated_at: tx.updated_at, source: tx.source }
+      images.value = (data.attachments || []).map((a: any) => ({
+        id: a.id,
+        url: a.url,
+        size: a.size,
+        created_at: a.created_at,
+      }))
+      splits.value = (data.splits || []).map((s: any) => ({
+        name: s.member_name || '',
+        amount: s.share_cents ? (Number(s.share_cents) / 100).toFixed(2) : '',
+      }))
     } else {
       // 默认账户：取第一个
       if (accounts.value.length) accountId.value = Number(accounts.value[0].id)
@@ -164,7 +239,8 @@ async function onSubmit() {
     const payload: Record<string, unknown> = {
       type: type.value,
       amount: amount.value,
-      currency: 'CNY',
+      currency: currency.value,
+      rate: Number(rate.value) || 1,
       account_id: accountId.value,
       txn_date: date.value,
       txn_time: time.value ? dayjs(time.value).format('HH:mm:ss') : '',
@@ -176,6 +252,11 @@ async function onSubmit() {
     }
     if (needsCategory.value) payload.category_id = categoryId.value
     if (needsToAccount.value) payload.to_account_id = toAccountId.value
+    const validSplits = splits.value.filter((s) => s.name.trim())
+    if (validSplits.length) {
+      payload.split_name = validSplits.map((s) => s.name.trim())
+      payload.split_amount = validSplits.map((s) => s.amount || '0')
+    }
 
     if (mode.value === 'edit' && editingId.value) {
       await TransactionsApi.update(editingId.value, payload)
@@ -265,11 +346,11 @@ watch(() => session.currentLedger?.id, () => {
         <NDivider />
 
         <!-- 账户 / 转入账户 -->
-        <NForm label-placement="left" label-width="80" :show-feedback="false">
-          <NFormItem :label="needsToAccount ? '转出账户' : '账户'">
+        <NForm label-placement="left" label-width="92" label-align="left" :show-feedback="false" class="txn-form">
+          <NFormItem :label="accountLabel">
             <AccountSelect v-model="accountId" :list="accounts" />
           </NFormItem>
-          <NFormItem v-if="needsToAccount" label="转入账户">
+          <NFormItem v-if="needsToAccount" label="转入 / 投资账户">
             <AccountSelect v-model="toAccountId" :list="accounts" />
           </NFormItem>
 
@@ -289,6 +370,15 @@ watch(() => session.currentLedger?.id, () => {
             />
           </NFormItem>
 
+          <!-- 成员（记录人，只读，与老版一致） -->
+          <NFormItem label="成员">
+            <NInput
+              :value="`${t.memberName || session.user?.displayName || ''}（当前记录人）`"
+              disabled
+              style="max-width: 200px"
+            />
+          </NFormItem>
+
           <!-- 分类 -->
           <NFormItem v-if="needsCategory" label="分类">
             <CategorySelect
@@ -296,15 +386,19 @@ watch(() => session.currentLedger?.id, () => {
               :list="categories"
               :kind="kindOf(type)"
               placeholder="请选择分类"
+              cascader
             />
           </NFormItem>
 
-          <!-- 商户 -->
-          <NFormItem label="商户">
-            <NInput
-              v-model:value="merchant"
-              placeholder="可选，如：星巴克 / 滴滴出行"
-            />
+          <!-- 商家 / 对方 -->
+          <NFormItem label="商家 / 对方">
+            <div class="field-col">
+              <NInput
+                v-model:value="merchant"
+                placeholder="例如：肯德基 / 张三 / 房东"
+              />
+              <NText depth="3" class="hint hint-block">借贷时的对方姓名很关键</NText>
+            </div>
           </NFormItem>
 
           <!-- 备注 -->
@@ -331,8 +425,10 @@ watch(() => session.currentLedger?.id, () => {
 
           <!-- 报销 / 状态 -->
           <NFormItem v-if="showReimbursable" label="可报销">
-            <NSwitch v-model:value="isReimbursable" />
-            <NText depth="3" class="hint">&nbsp;勾选后可在「待报销」中一次性结清</NText>
+            <div class="field-row">
+              <NSwitch v-model:value="isReimbursable" />
+              <NText depth="3" class="hint">勾选后可在「待报销」中一次性结清</NText>
+            </div>
           </NFormItem>
 
           <NFormItem label="状态">
@@ -347,10 +443,73 @@ watch(() => session.currentLedger?.id, () => {
           </NFormItem>
         </NForm>
 
+        <!-- 多币种 / 汇率（可选，折叠） -->
+        <NCollapse :default-expanded-names="[]">
+          <NCollapseItem name="currency" title="多币种 / 汇率（可选）">
+            <NForm label-placement="left" label-width="110" :show-feedback="false" class="currency-form">
+              <NFormItem label="币种">
+                <NSelect
+                  v-model:value="currency"
+                  :options="CURRENCIES.map((c) => ({ label: c, value: c }))"
+                  style="max-width: 160px"
+                />
+              </NFormItem>
+              <NFormItem label="汇率">
+                <NInput v-model:value="rate" placeholder="1" style="max-width: 160px">
+                  <template #suffix>≈ ¥</template>
+                </NInput>
+              </NFormItem>
+            </NForm>
+          </NCollapseItem>
+        </NCollapse>
+
         <NAlert v-if="type === 'adjust'" type="info" :show-icon="true" class="tip">
           余额调整会生成一条「调整」交易，把账户余额改成当前值。需先在账户页输入目标余额。
         </NAlert>
+
+        <NAlert type="info" :show-icon="true" class="tip">
+          提示：<b>转账</b>、<b>借贷</b>、<b>投资买卖</b> 不计入收支统计，只影响账户余额，这样统计口径更准确。
+        </NAlert>
       </NCard>
+
+      <!-- AA 分账 -->
+      <NCard :bordered="true" class="form-card split-card">
+        <div class="split-head">
+          <span class="split-title">AA 分账</span>
+          <NText depth="3" class="hint">可选，用于朋友聚餐 / 团队开销</NText>
+        </div>
+        <div v-for="(row, i) in splits" :key="i" class="split-row">
+          <NInput v-model:value="row.name" placeholder="成员" />
+          <NInput v-model:value="row.amount" placeholder="金额" inputmode="decimal" />
+          <NButton quaternary circle size="small" @click="removeSplit(i)">✕</NButton>
+        </div>
+        <NSpace>
+          <NButton size="small" @click="addSplit">＋ 添加分摊人</NButton>
+          <NButton size="small" quaternary @click="splitAverage">按人数均摊</NButton>
+        </NSpace>
+      </NCard>
+
+      <!-- 编辑模式：元信息 + 关联截图 -->
+      <template v-if="mode === 'edit'">
+        <NCard :bordered="true" class="form-card">
+          <div class="kv"><span class="k">创建时间</span><span class="v mono">{{ fmtDateTime(meta.created_at) }}</span></div>
+          <div class="kv"><span class="k">最后修改</span><span class="v mono">{{ fmtDateTime(meta.updated_at) }}</span></div>
+          <div class="kv"><span class="k">来源</span><span class="v">{{ meta.source || 'manual' }}</span></div>
+        </NCard>
+
+        <NCard v-if="images.length" :bordered="true" class="form-card">
+          <div class="split-head">
+            <span class="split-title">📎 关联账单截图（{{ images.length }}）</span>
+            <RouterLink to="/attachments" class="more-link">全部截图 →</RouterLink>
+          </div>
+          <div class="gallery">
+            <figure v-for="img in images" :key="img.id">
+              <img :src="img.url" alt="账单截图" loading="lazy" />
+              <figcaption>{{ fmtDateTime(img.created_at) }} · {{ fmtSize(img.size) }}</figcaption>
+            </figure>
+          </div>
+        </NCard>
+      </template>
     </NSpin>
   </AppShell>
 </template>
@@ -369,5 +528,54 @@ watch(() => session.currentLedger?.id, () => {
 .amount-section { padding: 8px 0 4px; }
 .amount-input { max-width: 320px; }
 .hint { font-size: 12px; }
+/* 表单字段纵向排列容器：控件与说明文字分行，避免挤在一行 */
+.field-col { display: flex; flex-direction: column; gap: 5px; width: 100%; }
+/* 横向排列容器：开关与说明文字同行。不能用 field-col —— 列方向会把 NSwitch
+   根元素拉伸到满宽，naive 的 .n-switch 内部是 justify-content:flex-end，
+   滑块会被推到最右，与上方输入框左边缘错位 */
+.field-row { display: flex; align-items: center; gap: 10px; width: 100%; }
+.hint-block { line-height: 1.5; }
+/* 字段间距：红框处原本过近，统一放大行距 */
+.txn-form :deep(.n-form-item) { margin-bottom: 10px; }
+.txn-form :deep(.n-form-item:last-child) { margin-bottom: 4px; }
+/* 多币种 / 汇率与主表单保持同一套行距 */
+.currency-form :deep(.n-form-item) { margin-bottom: 10px; }
+.currency-form :deep(.n-form-item:last-child) { margin-bottom: 0; }
+/* label 竖排时不换行，「商家 / 对方」等长文案保持单行 */
+.txn-form :deep(.n-form-item-label__text) { white-space: nowrap; }
 .tip { margin-top: 12px; }
+.currency-form { max-width: 420px; }
+.split-card { margin-top: 12px; }
+.split-head {
+  display: flex; align-items: baseline; gap: 10px;
+  margin-bottom: 12px; flex-wrap: wrap;
+}
+.split-title { font-size: 15px; font-weight: 600; }
+.more-link { margin-left: auto; font-size: 12px; color: var(--hl-primary, #18a058); text-decoration: none; }
+.more-link:hover { text-decoration: underline; }
+.split-row {
+  display: grid; grid-template-columns: 1fr 1fr auto;
+  gap: 8px; margin-bottom: 8px; align-items: center;
+}
+/* 元信息键值对（老版 .kv） */
+.kv {
+  display: flex; justify-content: space-between;
+  padding: 5px 0; font-size: 13px;
+}
+.kv .k { color: var(--hl-muted, #7d8aa3); }
+.kv .v { color: var(--hl-text, #17202e); }
+.kv .v.mono { font-variant-numeric: tabular-nums; font-family: v-mono, SFMono-Regular, Menlo, Consolas, monospace; }
+/* 截图画廊（老版 .gallery） */
+.gallery {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 12px;
+}
+.gallery figure { margin: 0; }
+.gallery img {
+  width: 100%; aspect-ratio: 3 / 4; object-fit: cover;
+  border-radius: 8px; border: 1px solid var(--hl-border, #e6eaf1);
+  cursor: zoom-in; background: var(--hl-card-2, #f7f8fb);
+}
+.gallery figcaption {
+  margin-top: 5px; font-size: 11px; color: var(--hl-muted, #7d8aa3);
+}
 </style>

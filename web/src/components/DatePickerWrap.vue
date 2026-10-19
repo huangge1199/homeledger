@@ -1,6 +1,13 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { NDatePicker } from 'naive-ui'
+import { NDatePicker, dateZhCN } from 'naive-ui'
+
+/** 日期格式：按 type 用中文习惯（2026年10月19日 / 10月19日） */
+const FORMAT_MAP: Record<string, string> = {
+  date: 'yyyy年M月d日',
+  datetime: 'yyyy年M月d日 HH:mm',
+  month: 'yyyy年M月',
+}
 
 interface Props {
   modelValue: string | null | undefined  // 'YYYY-MM-DD'
@@ -12,6 +19,8 @@ const props = withDefaults(defineProps<Props>(), {
   clearable: true,
 })
 const emit = defineEmits<{ 'update:modelValue': [v: string] }>()
+
+const fmt = computed(() => FORMAT_MAP[props.type] || FORMAT_MAP.date)
 
 // naive 的 NDatePicker 接受毫秒时间戳
 const ts = computed<number | null>({
@@ -36,6 +45,8 @@ const ts = computed<number | null>({
   <NDatePicker
     v-model:value="ts"
     :type="type"
+    :format="fmt"
+    :locale="dateZhCN"
     :clearable="clearable"
     class="hl-date"
   />
