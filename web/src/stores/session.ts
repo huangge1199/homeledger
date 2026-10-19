@@ -36,6 +36,8 @@ interface SessionState {
   needsSetup: boolean
   siteName: string
   baseCurrency: string
+  // 通知中心未读数（侧栏徽标，老版 layout.ejs 行为）
+  unreadCount: number
   // 当前主题（独立于 user.theme；切换立刻生效 + 写回 server）
   theme: 'light' | 'dark'
 }
@@ -52,6 +54,7 @@ export const useSessionStore = defineStore('session', {
     needsSetup: false,
     siteName: '家账簿',
     baseCurrency: 'CNY',
+    unreadCount: 0,
     theme: (localStorage.getItem('hl.theme') as 'light' | 'dark') || 'light',
   }),
   getters: {
@@ -72,6 +75,10 @@ export const useSessionStore = defineStore('session', {
     toggleTheme() {
       this.setTheme(this.theme === 'dark' ? 'light' : 'dark')
     },
+    /** 通知已读后同步侧栏徽标 */
+    setUnread(n: number) {
+      this.unreadCount = Math.max(0, Number(n) || 0)
+    },
     /** 从 /api/v1/session 拉一次；401 由拦截器处理 */
     async refresh() {
       this.loading = true
@@ -88,6 +95,7 @@ export const useSessionStore = defineStore('session', {
             needsSetup: boolean
             siteName: string
             baseCurrency: string
+            unreadCount?: number
           }
         }>('/session')
         const d = data.data
@@ -99,6 +107,7 @@ export const useSessionStore = defineStore('session', {
         this.needsSetup = d.needsSetup
         this.siteName = d.siteName || '家账簿'
         this.baseCurrency = d.baseCurrency || 'CNY'
+        this.unreadCount = Number(d.unreadCount || 0)
         if (d.user?.theme) this.setTheme(d.user.theme)
         else this.setTheme(this.theme)
         this.loaded = true

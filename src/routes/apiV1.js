@@ -27,6 +27,7 @@ router.get('/session', (req, res) => {
     needsSetup: !!res.locals.needsSetup,
     siteName: res.locals.siteName,
     baseCurrency: res.locals.baseCurrency,
+    unreadCount: Number(res.locals.unreadCount || 0),
   });
 });
 

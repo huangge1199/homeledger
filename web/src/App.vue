@@ -6,6 +6,7 @@ import { useSessionStore } from '@/stores/session'
 import { useFlash } from '@/composables/useFlash'
 import { storeToRefs } from 'pinia'
 import AppSplash from '@/components/AppSplash.vue'
+import { lightThemeOverrides } from '@/theme/naive'
 
 const session = useSessionStore()
 const { items } = useFlash()
