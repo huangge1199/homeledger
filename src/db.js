@@ -210,6 +210,7 @@ CREATE TABLE IF NOT EXISTS transactions (
   category_id      INTEGER,
   user_id          INTEGER NOT NULL,
   txn_date         TEXT NOT NULL,
+  txn_time         TEXT,
   note             TEXT,
   merchant         TEXT,
   status           TEXT NOT NULL DEFAULT 'cleared',
@@ -441,6 +442,8 @@ function ensureColumn(table, column, ddl) {
 
 const migrated = [];
 if (ensureColumn('transactions', 'subscription_id', 'INTEGER')) migrated.push('transactions.subscription_id');
+// 消费时刻（HH:mm，可空）：txn_date 只到天，消费时刻需单独记录
+if (ensureColumn('transactions', 'txn_time', 'TEXT')) migrated.push('transactions.txn_time');
 if (ensureColumn('users', 'avatar_path', 'TEXT')) migrated.push('users.avatar_path');
 if (ensureColumn('users', 'avatar_ver', 'INTEGER')) migrated.push('users.avatar_ver');
 if (migrated.length) console.log(`[db] 已补齐字段：${migrated.join('、')}`);

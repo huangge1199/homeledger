@@ -8,6 +8,8 @@ import dayjs from 'dayjs'
 export interface TxnItem {
   id: number
   txn_date: string
+  /** 消费时刻 HH:mm:ss，可空 */
+  txn_time?: string | null
   type: string
   type_label?: string
   type_icon?: string
@@ -93,6 +95,11 @@ const weekday = computed(() => (d: string) => {
   const w = dayjs(d).day()
   return ['日', '一', '二', '三', '四', '五', '六'][w] || ''
 })
+
+/** 消费时刻 HH:mm:ss（后端 txn_time 字段，可能为空） */
+function itemTime(t: TxnItem) {
+  return t.txn_time || ''
+}
 </script>
 
 <template>
@@ -105,7 +112,7 @@ const weekday = computed(() => (d: string) => {
         <div class="day-head" @click="bulk && toggleDay(g)">
           <NCheckbox v-if="bulk" :checked="g.items.every(it => (selected || []).includes(it.id))" @update:checked="() => toggleDay(g)" />
           <span class="bold">{{ relLabel(g.date) }}</span>
-          <NText depth="3" class="wd">{{ weekday(g.date) }}</NText>
+          <NText depth="3" class="wd">星期{{ weekday(g.date) }}</NText>
           <span class="day-sum">
             <span v-if="g.income" class="income">+<AmountDisplay :cents="g.income" :sign="true" tone="income" :small="true" /></span>
             <span v-if="g.expense" class="expense">-<AmountDisplay :cents="g.expense" :sign="true" tone="expense" :small="true" /></span>
@@ -148,7 +155,11 @@ const weekday = computed(() => (d: string) => {
             <div v-if="t.is_transfer && t.account_name && t.to_account_name" class="acc-pair">
               {{ t.account_name }} → {{ t.to_account_name }}
             </div>
-            <div v-else-if="t.account_name" class="acc">{{ t.account_name }}</div>
+            <div v-else class="acc">
+              <span v-if="t.account_name">{{ t.account_name }}</span>
+              <span v-if="t.account_name && itemTime(t)" class="dot-sep">·</span>
+              <span v-if="itemTime(t)" class="time">{{ itemTime(t) }}</span>
+            </div>
           </div>
         </div>
       </div>
@@ -197,4 +208,7 @@ const weekday = computed(() => (d: string) => {
 .amount { text-align: right; font-size: 14px; min-width: 80px; }
 .amount .transfer { color: var(--hl-muted); }
 .acc, .acc-pair { font-size: 11px; color: var(--hl-muted); margin-top: 2px; }
+/* 消费时刻：等宽数字保证纵向对齐 */
+.acc .time { font-variant-numeric: tabular-nums; }
+.acc .dot-sep { margin: 0 4px; }
 </style>

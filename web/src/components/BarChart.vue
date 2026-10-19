@@ -73,5 +73,9 @@ const option = computed(() => {
 </script>
 
 <template>
-  <VChart :option="option" :style="{ height: typeof height === 'number' ? `${height}px` : height, width: '100%' }" autoresize />
+  <VChart
+    :option="option"
+    :style="{ height: typeof height === 'number' ? `${height}px` : /^\d+$/.test(String(height)) ? `${height}px` : height, width: '100%' }"
+    autoresize
+  />
 </template>

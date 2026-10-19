@@ -49,6 +49,7 @@ function readForm(body) {
     to_account_id:  body.to_account_id || null,
     category_id:    body.category_id || null,
     txn_date:       body.txn_date || todayStr(),
+    txn_time:       body.txn_time ?? '',
     note:           body.note || '',
     merchant:       body.merchant || '',
     status:         body.status || 'cleared',

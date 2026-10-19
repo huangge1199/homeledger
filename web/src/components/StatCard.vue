@@ -62,7 +62,12 @@ const deltaTone = computed(() => {
 .hl-stat { padding: 14px 16px; }
 .head { display:flex; justify-content:space-between; align-items:center; color: var(--hl-muted); font-size:12px; }
 .icon  { font-size: 16px; }
-.value { font-size: 22px; font-weight: 600; margin-top: 6px; font-variant-numeric: tabular-nums; }
-.foot  { display:flex; justify-content:space-between; align-items:center; margin-top: 6px; font-size: 12px; }
+.value { font-size: 22px; font-weight: 600; margin-top: 6px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.foot  { display:flex; justify-content:space-between; align-items:center; gap: 8px; margin-top: 6px; font-size: 12px; }
 .delta { font-variant-numeric: tabular-nums; }
+
+/* 窄屏缩小金额字号，优先保证单行不截断 */
+@media (max-width: 480px) {
+  .value { font-size: 20px; }
+}
 </style>

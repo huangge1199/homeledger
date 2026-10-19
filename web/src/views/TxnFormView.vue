@@ -4,7 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import dayjs from 'dayjs'
 import {
   NCard, NForm, NFormItem, NInput, NInputNumber, NButton, NSpace, NSelect, NText, NTag, NCheckbox,
-  NDivider, NPopconfirm, NSpin, NSwitch, NAlert,
+  NDivider, NPopconfirm, NSpin, NSwitch, NAlert, NTimePicker,
 } from 'naive-ui'
 import { useMessage } from 'naive-ui'
 
@@ -39,6 +39,8 @@ const editingId = computed(() => {
 const type = ref<string>('expense')
 const amount = ref<string>('')
 const date = ref<string>(dayjs().format('YYYY-MM-DD'))
+/** 消费时刻 HH:mm:ss，可空（后端 txn_time 字段） */
+const time = ref<number | null>(null)
 const accountId = ref<number | null>(null)
 const toAccountId = ref<number | null>(null)
 const categoryId = ref<number | null>(null)
@@ -110,6 +112,7 @@ async function load() {
       type.value = t.type || 'expense'
       amount.value = (Number(t.amount_cents || 0) / 100).toFixed(2)
       date.value = t.txn_date
+      time.value = t.txn_time ? dayjs(`2000-01-01T${t.txn_time}`).valueOf() : null
       accountId.value = t.account_id
       toAccountId.value = t.to_account_id
       categoryId.value = t.category_id
@@ -164,6 +167,7 @@ async function onSubmit() {
       currency: 'CNY',
       account_id: accountId.value,
       txn_date: date.value,
+      txn_time: time.value ? dayjs(time.value).format('HH:mm:ss') : '',
       note: note.value,
       merchant: merchant.value,
       status: status.value,
@@ -272,6 +276,17 @@ watch(() => session.currentLedger?.id, () => {
           <!-- 日期 -->
           <NFormItem label="日期">
             <DatePickerWrap v-model="date" style="max-width: 200px" />
+          </NFormItem>
+
+          <!-- 消费时刻（可选，24 小时制） -->
+          <NFormItem label="时刻">
+            <NTimePicker
+              v-model:value="time"
+              format="HH:mm:ss"
+              :clearable="true"
+              placeholder="可选，如 08:30:00"
+              style="max-width: 200px"
+            />
           </NFormItem>
 
           <!-- 分类 -->

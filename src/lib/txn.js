@@ -184,13 +184,17 @@ function createTransaction(ledgerId, userId, d) {
   if ((type === 'invest_buy' || type === 'invest_sell') && accountId === toAccountId) throw new Error('投资交易的双方账户不能相同');
 
   const txnDate = /^\d{4}-\d{2}-\d{2}$/.test(String(d.txn_date || '')) ? d.txn_date : todayStr();
+  // 消费时刻：接受 HH:mm 或 HH:mm:ss，统一存 HH:mm:ss；不合法则置空
+  const rawTime = String(d.txn_time || '').trim();
+  const m = rawTime.match(/^([01]\d|2[0-3]):([0-5]\d)(?::([0-5]\d))?$/);
+  const txnTime = m ? `${m[1]}:${m[2]}:${m[3] || '00'}` : null;
   const info = run(
     `INSERT INTO transactions
      (ledger_id, type, amount_cents, currency, rate, amount_base_cents, account_id, to_account_id, category_id,
-      user_id, txn_date, note, merchant, status, is_reimbursable, group_id, source, ai_json, created_at, updated_at)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      user_id, txn_date, txn_time, note, merchant, status, is_reimbursable, group_id, source, ai_json, created_at, updated_at)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     ledgerId, type, amount, currency, rate, toBase(amount, rate), accountId, toAccountId,
-    pickCategory(ledgerId, d.category_id), userId, txnDate,
+    pickCategory(ledgerId, d.category_id), userId, txnDate, txnTime,
     d.note ? String(d.note).slice(0, 300) : null,
     d.merchant ? String(d.merchant).slice(0, 60) : null,
     d.status === 'pending' ? 'pending' : 'cleared',
@@ -220,14 +224,20 @@ function updateTransaction(id, ledgerId, userId, d) {
   const toAccountId = pickAccount(ledgerId, d.to_account_id);
   if (type === 'transfer' && (!accountId || !toAccountId)) throw new Error('转账需要选择转出与转入账户');
   if (type === 'transfer' && accountId === toAccountId) throw new Error('转出与转入账户不能相同');
+  // 消费时刻：传了就校验并覆盖（空串表示清除），未传则保留原值
+  const hasTime = d.txn_time !== undefined;
+  const rawTime = hasTime ? String(d.txn_time || '').trim() : '';
+  const tm = rawTime.match(/^([01]\d|2[0-3]):([0-5]\d)(?::([0-5]\d))?$/);
+  const nextTime = hasTime ? (tm ? `${tm[1]}:${tm[2]}:${tm[3] || '00'}` : null) : (old.txn_time || null);
   run(
     `UPDATE transactions SET type=?, amount_cents=?, currency=?, rate=?, amount_base_cents=?, account_id=?,
-       to_account_id=?, category_id=?, txn_date=?, note=?, merchant=?, status=?, is_reimbursable=?,
+       to_account_id=?, category_id=?, txn_date=?, txn_time=?, note=?, merchant=?, status=?, is_reimbursable=?,
        updated_at=? WHERE id=?`,
     type, amount, d.currency || old.currency, rate, toBase(amount, rate),
     accountId, toAccountId,
     pickCategory(ledgerId, d.category_id),
     /^\d{4}-\d{2}-\d{2}$/.test(String(d.txn_date || '')) ? d.txn_date : old.txn_date,
+    nextTime,
     d.note ? String(d.note).slice(0, 300) : null,
     d.merchant ? String(d.merchant).slice(0, 60) : null,
     d.status === 'pending' ? 'pending' : 'cleared',
