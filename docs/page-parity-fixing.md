@@ -30,6 +30,7 @@
 |---|---|---|---|---|---|
 | A1 | 侧栏 + 顶栏 + 移动端 + AI 浮窗 | `layout.ejs` | `AppShell.vue` + `AiPanel.vue` | 已确认 | 见下方修复清单 |
 | A2 | 空白页全局阻断（RouterView 嵌套） | — | `AppShell.vue` | 已确认 | 见下方修复清单 |
+| A3 | 全局 fetch+FormData 被 CSRF 拦截 | — | `session.ts` | 待确认 | 见下方修复清单 |
 
 A1 已修复内容：
 
@@ -60,6 +61,19 @@ A1 已修复内容：
 **修复**：`AppShell.vue` 内容区由 `<RouterView v-else />` 改为 `<slot v-else />`，并移除不再使用的 `RouterView` 导入。页面内容经各视图已有的默认插槽传入，与 `BlankLayout.vue` 的既有写法保持一致（该文件注释里已记录过这个坑，只是 AppShell 漏改）。
 
 **教训**：`AppShell` / `BlankLayout` 是纯布局组件，内容必须靠 `slot` 传入，**绝不能内嵌 `RouterView`**；顶层扁平路由下内嵌 `RouterView` 必然渲染空白。
+
+### A3 已修复内容（fetch + FormData 被 CSRF 拦截，影响退出登录与切账本）
+
+**现象**：右上角点「退出登录」报 403。
+
+**根因**：`server.js` 中 `auth.csrfProtect` 全局挂载（`/api/v1` 豁免，靠 axios 拦截器注入 `X-CSRF-Token` header）。但 store 里两处用原生 `fetch` 直发非 v1 端点，body 用的是 `FormData` —— 浏览器自动设为 `multipart/form-data`，而后端只有 `express.urlencoded` / `express.json`，**multipart 不会被解析**：
+
+- `logout()`：只把 `_csrf` 放 FormData，既没带 header，body 也解析不到 → 403
+- `switchLedger()`：带了 `X-CSRF-Token` header 能过 CSRF，但 `ledger_id` 同样在 multipart 里解析不到 → **切账本静默失效**（session.ledgerId 从未被更新）
+
+**修复**：两处 `new FormData()` 改为 `new URLSearchParams()`，浏览器自动以 `application/x-www-form-urlencoded` 发送，`express.urlencoded` 可正常解析。
+
+**教训**：SPA 里直发非 `/api/v1` 的 SSR 遗留 POST 端点时，表单体必须用 `URLSearchParams`（urlencoded）；`FormData`（multipart）在后端没有对应解析中间件，字段全会丢。
 
 ---
 
@@ -266,3 +280,4 @@ B1 第二轮修复（用户截图反馈后）：
 | 2026-10-19 | A2 | **全局阻断**：`AppShell` 内嵌 `<RouterView>` 致所有页面内容区空白，改为 `<slot>`。属架构遗留缺陷，非对等修复范畴 |
 | 2026-10-19 | B2+ | 截图反馈 3 处小修：表单行距统一 10px、可报销开关改横排、分类浮层补背景 |
 | 2026-10-19 | B3 | 账单明细 15 项（详见上表），含后端 `sum` 透传、`reimbursable=1` 归一化、chips/汇总/分页/筛选/批量报销/行内按钮全量补齐。**待确认** |
+| 2026-10-19 | A3 | **退出登录 403**：store 里 `fetch`+`FormData`（multipart）不被 `express.urlencoded` 解析，CSRF token 丢失；`logout()`/`switchLedger()` 改用 `URLSearchParams`，顺带修复切账本静默失效。**待确认** |
