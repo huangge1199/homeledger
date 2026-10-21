@@ -30,6 +30,11 @@ export const TXN_TYPES: TxnType[] = [
 
 export const TXN_TYPE_MAP: Record<string, TxnType> = Object.fromEntries(TXN_TYPES.map((t) => [t.key, t]))
 
+/** 计入「收入」统计的类型（与后端 src/lib/txn.js INCOME_TYPES 同步） */
+export const INCOME_STAT_TYPES = ['income', 'interest', 'refund', 'reimburse']
+/** 计入「支出」统计的类型（与后端 src/lib/txn.js EXPENSE_TYPES 同步） */
+export const EXPENSE_STAT_TYPES = ['expense', 'fee']
+
 /** 一级展示：最常用的 4 种 */
 export const PRIMARY_TXN_TYPES = ['expense', 'income', 'transfer', 'lend']
 

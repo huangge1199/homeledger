@@ -33,6 +33,8 @@ export interface TxnItem {
   member_name?: string
   status?: 'pending' | 'cleared'
   is_reimbursable?: number
+  /** 报销完成时间：有值表示已报销 */
+  reimbursed_at?: string | null
   source?: string
   attachment_count?: number
 }
@@ -59,6 +61,8 @@ const emit = defineEmits<{
   'update:selected': [ids: number[]]
   'click-item': [item: TxnItem]
   'click-day': [date: string]
+  /** 点击分类名：按该分类筛选（老版 txn-cat 链接） */
+  'filter-category': [categoryId: number]
   'edit': [item: TxnItem]
   'delete': [item: TxnItem]
 }>()
@@ -73,7 +77,9 @@ function relLabel(date: string) {
   const today = dayjs()
   if (d.isSame(today, 'day')) return '今天'
   if (d.isSame(today.subtract(1, 'day'), 'day')) return '昨天'
-  return d.format('MM月DD日')
+  if (d.isSame(today.subtract(2, 'day'), 'day')) return '前天'
+  if (d.year() === today.year()) return `${d.month() + 1}月${d.date()}日`
+  return `${d.year()}年${d.month() + 1}月${d.date()}日`
 }
 
 function toggle(id: number) {
@@ -108,6 +114,17 @@ function itemTime(t: TxnItem) {
   return t.txn_time || ''
 }
 
+/**
+ * 行内金额的带符号值：支出取负，保证 AmountDisplay 渲染成「-¥50.00」而非「+¥50.00」
+ * （老版 txn-list.ejs 是支出加「-」前缀、收入加「+」前缀，金额本身在库里始终为正）
+ */
+function signedAmount(t: TxnItem) {
+  const cents = Number(t.amount_cents || 0)
+  if (t.is_expense) return -Math.abs(cents)
+  if (t.is_income) return Math.abs(cents)
+  return cents
+}
+
 /** source → 老版 chip 标签（与 txn-list.ejs 43-61 行同源） */
 const sourceLabel: Record<string, string> = {
   ai_screenshot: 'AI',
@@ -136,8 +153,8 @@ function isPrimarySource(s?: string) {
           <span class="bold">{{ relLabel(g.date) }}</span>
           <NText depth="3" class="wd">星期{{ weekday(g.date) }}</NText>
           <span class="day-sum">
-            <span v-if="g.income" class="income">+<AmountDisplay :cents="g.income" :sign="true" tone="income" :small="true" /></span>
-            <span v-if="g.expense" class="expense">-<AmountDisplay :cents="g.expense" :sign="true" tone="expense" :small="true" /></span>
+            <span v-if="g.income" class="income">+<AmountDisplay :cents="g.income" :sign="false" tone="income" :small="true" /></span>
+            <span v-if="g.expense" class="expense">-<AmountDisplay :cents="g.expense" :sign="false" tone="expense" :small="true" /></span>
           </span>
         </div>
         <div
@@ -152,18 +169,24 @@ function isPrimarySource(s?: string) {
           <div class="main">
             <div class="title">
               <!-- 分类名（点击按该分类筛选，转账无分类语义保持纯文本） -->
-              <span v-if="t.category_id && t.type !== 'transfer'" class="cat-name">{{ t.category_name || t.type_label }}</span>
+              <a
+                v-if="t.category_id && t.type !== 'transfer'"
+                class="cat-name"
+                href="javascript:void(0)"
+                title="查看该分类的全部记录"
+                @click.stop="emit('filter-category', t.category_id)"
+              >{{ t.category_name || t.type_label }}</a>
               <span v-else>{{ t.type === 'transfer' ? '转账' : (t.category_name || t.type_label || '未分类') }}</span>
               <NText v-if="t.category_parent && t.type !== 'transfer'" depth="3" class="parent">{{ t.category_parent }}</NText>
-              <NText v-if="t.merchant" depth="2" class="merchant">@{{ t.merchant }}</NText>
-              <NTag v-if="t.attachment_count" size="tiny" :bordered="false" type="info">📎 {{ t.attachment_count }}</NTag>
+              <NText v-if="t.merchant" depth="2" class="merchant">{{ t.merchant }}</NText>
+              <NText v-if="t.note" depth="3" class="note">{{ t.note }}</NText>
             </div>
-            <div v-if="t.note || t.tag_names || t.member_name || t.is_reimbursable || t.status === 'pending' || sourceChip(t.source)" class="sub">
+            <div class="sub">
               <!-- 转账/投资类显示双边账户 -->
               <NText v-if="t.is_transfer || t.type === 'invest_buy' || t.type === 'invest_sell'" depth="3" class="acc-pair">
                 {{ t.account_name || '—' }} → {{ t.to_account_name || '—' }}
               </NText>
-              <NText v-else-if="t.account_name" depth="3" class="acc">{{ t.account_name }}</NText>
+              <NText v-else depth="3" class="acc">{{ t.account_name || '未指定账户' }}</NText>
               <template v-if="t.member_name">
                 <span class="sep">·</span>
                 <NText depth="3" class="member">{{ t.member_name }}</NText>
@@ -171,17 +194,20 @@ function isPrimarySource(s?: string) {
               <template v-for="(tg, i) in tagList(t.tag_names)" :key="i">
                 <NTag size="tiny" :bordered="false" type="primary" class="tag">{{ tg }}</NTag>
               </template>
-              <NTag v-if="t.is_reimbursable" size="tiny" :type="t.status === 'pending' ? 'warning' : 'success'" :bordered="false">待报销</NTag>
-              <NTag v-else-if="t.status === 'pending'" size="tiny" :bordered="false">待入账</NTag>
+              <!-- 报销状态：已报销 / 待报销（老版按 reimbursed_at 区分） -->
+              <NTag v-if="t.is_reimbursable" size="tiny" :type="t.reimbursed_at ? 'success' : 'warning'" :bordered="false">
+                {{ t.reimbursed_at ? '已报销' : '待报销' }}
+              </NTag>
+              <NTag v-if="t.status === 'pending'" size="tiny" :bordered="false">待确认</NTag>
+              <NTag v-if="t.attachment_count" size="tiny" :bordered="false" type="info" title="已关联账单截图">📎 {{ t.attachment_count }}</NTag>
               <NTag v-if="sourceChip(t.source)" size="tiny" :type="isPrimarySource(t.source) ? 'primary' : 'default'" :bordered="false">{{ sourceChip(t.source) }}</NTag>
-              <NText v-if="t.note" depth="3" class="note">{{ t.note }}</NText>
             </div>
           </div>
           <div class="amount-col">
             <span v-if="t.type === 'transfer'" class="transfer">→</span>
             <AmountDisplay
               v-else
-              :cents="t.amount_cents"
+              :cents="signedAmount(t)"
               :tone="t.is_expense ? 'expense' : t.is_income ? 'income' : 'neutral'"
               :sign="t.is_income || t.is_expense"
             />
@@ -247,7 +273,9 @@ function isPrimarySource(s?: string) {
 }
 .main  { flex: 1; min-width: 0; }
 .title { display:flex; align-items:center; gap:6px; font-size: 14px; flex-wrap: wrap; line-height: 1.4; }
-.title .cat-name { font-weight: 500; }
+/* 老版 a.txn-cat：常态继承文字色，hover 变主色 */
+.title .cat-name { font-weight: 500; color: inherit; cursor: pointer; transition: color .12s; }
+.title .cat-name:hover { color: var(--hl-primary, #3d6df5); }
 .title .parent   { font-size: 12px; }
 .title .merchant { font-size: 12px; }
 .sub  { display:flex; gap: 6px; align-items:center; font-size: 12px; margin-top: 3px; flex-wrap: wrap; line-height: 1.4; }

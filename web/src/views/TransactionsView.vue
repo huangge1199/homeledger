@@ -4,7 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import dayjs from 'dayjs'
 import {
   NCard, NButton, NSpace, NSelect, NText, NInput, NTag, NSpin, NPopconfirm,
-  NCheckbox, NDivider, NIcon, NInputNumber, NRadioGroup, NRadio,
+  NCheckbox, NDivider, NGrid, NGridItem,
 } from 'naive-ui'
 import AppShell from '@/layouts/AppShell.vue'
 import PageHead from '@/components/PageHead.vue'
@@ -57,13 +57,18 @@ const list = ref<{
 
 // 选项
 const accounts = ref<{ id: number; name: string; icon: string }[]>([])
-const categories = ref<{ id: number; name: string; icon: string; color: string; kind: 'expense' | 'income' }[]>([])
+const categories = ref<{
+  id: number; name: string; icon: string; color: string
+  kind: 'expense' | 'income'; parent_id?: number | null; path?: string
+}[]>([])
 const members = ref<{ id: number; name: string; color?: string }[]>([])
 
 // 批量
 const selected = ref<number[]>([])
 const bulkMode = ref(false)
 const reimburseAccountId = ref<number | null>(null)
+const bulkCategoryId = ref<number | null>(null)
+const bulkTag = ref<string>('')
 
 // 同比：上月对比
 const compare = ref<{ cur: SumBucket; prev: SumBucket; month: string } | null>(null)
@@ -97,12 +102,32 @@ const memberOptions = computed(() => [
 
 const categoryOptions = computed(() => {
   const k = typeFilter.value ? kindOf(typeFilter.value) : kindFilter.value || 'all'
-  return [
-    { label: '全部分类', value: 0 },
-    ...categories.value
-      .filter((c) => k === 'all' || c.kind === k)
-      .map((c) => ({ label: `${c.icon} ${c.name}`, value: c.id })),
-  ]
+  const group = (kind: 'expense' | 'income', label: string) => {
+    const list = categories.value.filter((c) => c.kind === kind)
+    const children: { label: string; value: number }[] = []
+    for (const root of list.filter((c) => !c.parent_id)) {
+      children.push({ label: `📁 ${root.name}`, value: root.id })
+      for (const sub of list.filter((c) => Number(c.parent_id) === Number(root.id))) {
+        children.push({ label: `　${sub.icon} ${sub.name}`, value: sub.id })
+      }
+    }
+    return { type: 'group' as const, key: kind, label, children }
+  }
+  const groups = []
+  if (k === 'all' || k === 'expense') groups.push(group('expense', '支出'))
+  if (k === 'all' || k === 'income') groups.push(group('income', '收入'))
+  return [{ label: '全部分类', value: 0 }, ...groups]
+})
+
+/** 批量改分类：老版只列二级分类（带父级路径） */
+const bulkCategoryOptions = computed(() => {
+  const out: { label: string; value: number }[] = []
+  for (const kind of ['expense', 'income'] as const) {
+    for (const c of categories.value.filter((x) => x.kind === kind && x.parent_id)) {
+      out.push({ label: c.path || c.name, value: c.id })
+    }
+  }
+  return out
 })
 
 const sortOptions = [
@@ -151,7 +176,7 @@ async function load() {
   loading.value = true
   try {
     const params: Record<string, unknown> = {
-      pageSize: 50,
+      pageSize: 40,
       page: page.value,
     }
     if (typeFilter.value) params.type = typeFilter.value
@@ -169,13 +194,13 @@ async function load() {
 
     const data = await TransactionsApi.list(params)
     // 标注每个 item 的 type 含义
-    const items: TxnItem[] = (data.items || []).map((r: any) => ({
+    const toItem = (r: any): TxnItem => ({
       id: r.id,
       txn_date: r.txn_date,
       txn_time: r.txn_time,
       type: r.type,
-      type_label: TXN_TYPE_MAP[r.type]?.label,
-      type_icon: TXN_TYPE_MAP[r.type]?.icon,
+      type_label: r.type_label || TXN_TYPE_MAP[r.type]?.label,
+      type_icon: r.type_icon || TXN_TYPE_MAP[r.type]?.icon,
       amount_cents: Number(r.amount_cents || 0),
       currency: r.currency,
       is_expense: flowOf(r.type) === 'out',
@@ -195,20 +220,18 @@ async function load() {
       member_name: r.member_name,
       status: r.status,
       is_reimbursable: r.is_reimbursable,
+      reimbursed_at: r.reimbursed_at,
       source: r.source,
       attachment_count: r.attachment_count,
+    })
+    const items: TxnItem[] = (data.items || []).map(toItem)
+    // 分组沿用后端 groupByDate（统计口径与后端 sum 一致：仅 income/interest/refund/reimburse 与 expense/fee 计入）
+    const groups = (data.groups || []).map((g: any) => ({
+      date: g.date,
+      income: Number(g.income || 0),
+      expense: Number(g.expense || 0),
+      items: (g.items || []).map(toItem),
     }))
-    // 按日期分组（TxnList 需要的格式）
-    const byDate: Record<string, { items: TxnItem[]; income: number; expense: number }> = {}
-    for (const it of items) {
-      if (!byDate[it.txn_date]) byDate[it.txn_date] = { items: [], income: 0, expense: 0 }
-      byDate[it.txn_date].items.push(it)
-      if (it.is_income) byDate[it.txn_date].income += it.amount_cents
-      if (it.is_expense) byDate[it.txn_date].expense += it.amount_cents
-    }
-    const groups = Object.entries(byDate)
-      .map(([date, g]) => ({ date, ...g }))
-      .sort((a, b) => b.date.localeCompare(a.date))
     list.value = {
       ...data,
       items, groups,
@@ -251,6 +274,11 @@ function sumOf(items: any[]) {
 function onClickItem(it: TxnItem) {
   router.push(`/transactions/${it.id}`)
 }
+/** 点分类名 → 按该分类筛选（老版 txn-cat 链接行为） */
+function onFilterCategory(cid: number) {
+  categoryId.value = cid
+  page.value = 1
+}
 function onEdit(it: TxnItem) {
   router.push(`/transactions/${it.id}/edit`)
 }
@@ -284,6 +312,39 @@ const hasFilter = computed(() =>
   || !!categoryId.value || !!memberId.value || !!sourceFilter.value
   || !!from.value || !!to.value || !!keyword.value || !!showReimbursable.value
 )
+
+/* ============================== 全选本页 ============================== */
+
+const pageIds = computed(() => list.value.items.map((i: any) => Number(i.id)))
+const selectedInPage = computed(() => pageIds.value.filter((id) => selected.value.includes(id)))
+const allSelected = computed(() => !!pageIds.value.length && selectedInPage.value.length === pageIds.value.length)
+const someSelected = computed(() => selectedInPage.value.length > 0 && !allSelected.value)
+function toggleSelectAll(v: boolean) {
+  const set = new Set(selected.value)
+  if (v) for (const id of pageIds.value) set.add(id)
+  else for (const id of pageIds.value) set.delete(id)
+  selected.value = Array.from(set)
+}
+
+/* ============================== 分页页码 ============================== */
+
+/**
+ * 老版 pager 页码序列（transactions.ejs 同构）：
+ * 固定 5 页滑动窗口 start..end，首页仅在 start>1 时单独列出，末页仅在 end<total 时单独列出
+ */
+const pageNumbers = computed<(number | 'gap')[]>(() => {
+  const total = list.value.totalPages
+  const cur = page.value
+  if (total <= 0) return []
+  let start = Math.max(1, cur - 2)
+  let end = Math.min(total, start + 4)
+  start = Math.max(1, end - 4)
+  const out: (number | 'gap')[] = []
+  if (start > 1) out.push(1, 'gap')
+  for (let p = start; p <= end; p++) out.push(p)
+  if (end < total) out.push('gap', total)
+  return out
+})
 
 /* ============================== 批量 ============================== */
 
@@ -342,12 +403,13 @@ async function bulkCategory(categoryId: number | null) {
   try {
     await TransactionsApi.bulk({ ids: selected.value, action: 'category', category_id: categoryId })
     success(`已修改 ${selected.value.length} 条的分类`)
+    bulkCategoryId.value = null
     load()
   } catch (e) {
     toastError(errorMessage(e, '改分类失败'))
   }
 }
-async function bulkTag(tag: string) {
+async function bulkAddTag(tag: string) {
   if (!selected.value.length || !tag.trim()) return
   try {
     await TransactionsApi.bulk({ ids: selected.value, action: 'tag', tag: tag.trim() })
@@ -356,6 +418,13 @@ async function bulkTag(tag: string) {
   } catch (e) {
     toastError(errorMessage(e, '加标签失败'))
   }
+}
+async function applyBulkCategory() {
+  await bulkCategory(bulkCategoryId.value)
+}
+async function applyBulkTag() {
+  await bulkAddTag(bulkTag.value)
+  bulkTag.value = ''
 }
 
 /* ============================== 初始化 / 同步 ============================== */
@@ -529,18 +598,30 @@ watch(() => session.currentLedger?.id, () => load())
 
     <!-- 汇总行 -->
     <div class="summary">
-      <span class="item">共 <b>{{ list.total }}</b> 笔</span>
-      <span class="item">支出 <b class="amt expense"><AmountDisplay :cents="list.sum.expense" :sign="false" tone="expense" /></b></span>
-      <span class="item">收入 <b class="amt income"><AmountDisplay :cents="list.sum.income" :sign="false" tone="income" /></b></span>
-      <span class="item">结余
-        <b :class="['amt', (list.sum.income - list.sum.expense) >= 0 ? 'income' : 'expense']">
-          <AmountDisplay :cents="list.sum.income - list.sum.expense" :sign="true" :tone="(list.sum.income - list.sum.expense) >= 0 ? 'income' : 'expense'" />
-        </b>
-      </span>
+      <div class="summary-stats">
+        <span class="item">共 <b>{{ list.total }}</b> 笔</span>
+        <span class="item">支出 <b class="amt expense"><AmountDisplay :cents="list.sum.expense" :sign="false" tone="expense" /></b></span>
+        <span class="item">收入 <b class="amt income"><AmountDisplay :cents="list.sum.income" :sign="false" tone="income" /></b></span>
+        <span class="item">结余
+          <b :class="['amt', (list.sum.income - list.sum.expense) >= 0 ? 'income' : 'expense']">
+            <AmountDisplay :cents="list.sum.income - list.sum.expense" :sign="true" :tone="(list.sum.income - list.sum.expense) >= 0 ? 'income' : 'expense'" />
+          </b>
+        </span>
+      </div>
+      <NButton size="small" quaternary @click="router.push('/export')">导出</NButton>
     </div>
 
     <!-- 列表 -->
     <NCard :bordered="true" class="list-card">
+      <!-- 全选本页：老版 #bulk-all 主复选框 -->
+      <div v-if="bulkMode" class="bulk-all">
+        <NCheckbox
+          :checked="allSelected"
+          :indeterminate="someSelected"
+          @update:checked="toggleSelectAll"
+        >全选本页</NCheckbox>
+        <NText depth="3" class="bulk-hint">勾选后可用下方批量操作</NText>
+      </div>
       <NSpin :show="loading">
         <Empty v-if="!loading && !list.total" icon="🗒️" title="还没有记录" description="点右上角「记一笔」开始，或上传账单截图让 AI 帮你记" />
         <TxnList
@@ -551,17 +632,21 @@ watch(() => session.currentLedger?.id, () => load())
           :show-actions="!bulkMode"
           @update:selected="(v: number[]) => selected = v"
           @click-item="onClickItem"
+          @filter-category="onFilterCategory"
           @edit="onEdit"
           @delete="onDelete"
         />
       </NSpin>
     </NCard>
 
-    <!-- 分页 -->
+    <!-- 分页：老版 .pager 全部元素同款样式，上一页/下一页按需出现 -->
     <div v-if="list.totalPages > 1" class="pager">
-      <NButton size="small" :disabled="page <= 1" @click="page = Math.max(1, page - 1)">上一页</NButton>
-      <span class="cur">{{ page }} / {{ list.totalPages }}</span>
-      <NButton size="small" :disabled="page >= list.totalPages" @click="page = Math.min(list.totalPages, page + 1)">下一页</NButton>
+      <button v-if="page > 1" class="pg" @click="page = page - 1">上一页</button>
+      <template v-for="(p, i) in pageNumbers" :key="`${p}-${i}`">
+        <span v-if="p === 'gap'" class="gap">…</span>
+        <button v-else class="pg" :class="{ cur: p === page }" @click="page = p as number">{{ p }}</button>
+      </template>
+      <button v-if="page < list.totalPages" class="pg" @click="page = page + 1">下一页</button>
     </div>
 
     <!-- 批量操作条 -->
@@ -578,6 +663,18 @@ watch(() => session.currentLedger?.id, () => load())
             恢复选中的 {{ selected.length }} 条记录（从已删除中恢复）？
           </NPopconfirm>
           <NButton size="small" @click="bulkReimbursable">标记为可报销</NButton>
+          <!-- 改分类：老版 bulk-bar 的「改分类为…」下拉 + 应用按钮 -->
+          <NSelect
+            v-model:value="bulkCategoryId"
+            :options="bulkCategoryOptions"
+            size="small"
+            placeholder="改分类为…"
+            class="bulk-cat"
+          />
+          <NButton size="small" :disabled="!bulkCategoryId" @click="applyBulkCategory">应用</NButton>
+          <!-- 加标签：老版 bulk-bar 的标签名输入框 + 加标签按钮 -->
+          <NInput v-model:value="bulkTag" size="small" placeholder="标签名" class="bulk-tag" @keyup.enter="applyBulkTag" />
+          <NButton size="small" :disabled="!bulkTag.trim()" @click="applyBulkTag">加标签</NButton>
           <NSelect
             v-model:value="reimburseAccountId"
             :options="accountOptions"
@@ -619,21 +716,45 @@ watch(() => session.currentLedger?.id, () => load())
 
 /* 汇总行：老版 .row.between + 三段统计 */
 .summary {
-  display: flex; flex-wrap: wrap; align-items: center; gap: 14px;
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px;
   padding: 4px 4px 10px; font-size: 13px;
   color: var(--hl-text-2, #45516a);
 }
+.summary-stats { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
 .summary .item b { font-weight: 600; }
 .summary .amt { font-variant-numeric: tabular-nums; }
 .summary .amt.expense { color: var(--hl-expense, #e5484d); }
 .summary .amt.income  { color: var(--hl-income,  #12a150); }
 
-/* 分页：居中 */
-.pager {
-  display: flex; gap: 12px; align-items: center; justify-content: center;
-  margin: 16px 0; color: var(--hl-muted, #7d8aa3); font-size: 13px;
+/* 全选本页 */
+.bulk-all {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 14px 0;
 }
-.pager .cur { font-variant-numeric: tabular-nums; }
+.bulk-hint { font-size: 12px; }
+
+/* 分页：老版 .pager 全部元素（上一页 / 页码 / 下一页）走同一套 .pager a 样式 */
+.pager {
+  display: flex; gap: 6px; align-items: center; justify-content: center; flex-wrap: wrap;
+  padding: 16px 0 4px; color: var(--hl-text-2, #45516a); font-size: 13px;
+}
+.pager .pg {
+  min-width: 32px; height: 32px; padding: 0 8px;
+  display: grid; place-items: center;
+  border-radius: 7px; /* 同老版 --radius-xs */
+  border: 1px solid var(--hl-border, #e6eaf1);
+  background: var(--hl-card, #fff);
+  color: var(--hl-text-2, #45516a);
+  font-family: inherit; font-size: 13px; font-variant-numeric: tabular-nums;
+  cursor: pointer; transition: border-color .14s, color .14s;
+}
+.pager .pg:hover { border-color: var(--hl-primary, #3d6df5); color: var(--hl-primary, #3d6df5); }
+.pager .pg.cur { background: var(--hl-primary, #3d6df5); border-color: var(--hl-primary, #3d6df5); color: #fff; font-weight: 600; }
+.pager .gap {
+  min-width: 32px; height: 32px; padding: 0 8px;
+  display: grid; place-items: center;
+  color: var(--hl-muted, #7d8aa3);
+}
 
 /* 批量操作条：sticky 底部 */
 .bulk-bar {
@@ -648,6 +769,8 @@ watch(() => session.currentLedger?.id, () => load())
 }
 .bulk-ops { flex: 1; }
 .reimburse-acc { min-width: 160px; max-width: 200px; }
+.bulk-cat { min-width: 150px; max-width: 190px; }
+.bulk-tag { width: 110px; }
 
 .fade-enter-active, .fade-leave-active { transition: all .15s; }
 .fade-enter-from, .fade-leave-to { opacity: 0; transform: translateY(-4px); }

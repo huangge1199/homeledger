@@ -1,6 +1,6 @@
 # 页面功能对等修复计划（老 v1 EJS → 新 v2 Vue3）
 
-> 目的：以老项目 `D:\project\homeledger-old` 为基准，逐页核对新版功能对等性并修复。
+> 目的：以老项目 `~\project\homeledger-old` 为基准，逐页核对新版功能对等性并修复。
 > 节奏：**一次只修一个页面 → 用户验证通过 → 再进入下一个**。未获确认不推进。
 > 状态字段：`待修` / `修复中` / `待确认` / `已确认` / `无差异`
 > 续接提示：新对话先读本文件，从「修复中/待确认」的行继续。
@@ -83,7 +83,7 @@ A1 已修复内容：
 |---|---|---|---|---|---|
 | B1 | 总览 | `dashboard.ejs` | `DashboardView.vue` | 已确认 | 见下方修复清单 |
 | B2 | 记一笔 / 编辑 | `txn-form.ejs` | `TxnFormView.vue` | 已确认 | 见下方修复清单；2026-10-19 补 3 处小修（行距/开关/分类浮层）已并入确认 |
-| B3 | 账单明细 | `transactions.ejs` | `TransactionsView.vue` | 待确认 | 见下方修复清单 |
+| B3 | 账单明细 | `transactions.ejs` | `TransactionsView.vue` | 待确认 | 见下方修复清单（第一轮 15 项 + 第二轮 19 项 + 第三轮 5 项） |
 | B4 | 记录详情 | — | `TxnDetailView.vue` | 待修 | 新增页，重点核字段与附件展示 |
 | B5 | 记账日历 | `calendar.ejs` | `CalendarView.vue` | 待修 | |
 | B6 | AI 截图记账 | `ai.ejs` | `AiView.vue` | 待修 | |
@@ -186,6 +186,64 @@ B1 第二轮修复（用户截图反馈后）：
 - URL 同步去掉默认值（`page=1 / sort=date_desc / reimbursable=0`），链接更短
 - 行内按钮在非批量模式下 hover 才显示，批量模式隐藏避免误点
 
+##### B3 第二轮修复（2026-10-21）
+
+以老版 `transactions.ejs` + `partials/txn-list.ejs` 逐条比对，补齐第一轮遗漏项，并修掉 3 个「编译通过但运行时/显示错」的隐性缺陷。
+
+**A. 隐性缺陷修复（编译不报错，最易漏）**
+
+| # | 问题 | 改法 | 影响文件 |
+|---|---|---|---|
+| 16 | **筛选网格完全失效** | 模板用了 `<NGrid>` / `<NGridItem>`，但 import 列表里**没有这两个**。`vue-tsc` 不报未定义模板组件，编译 0 错误，产物却是 `resolveComponent("NGrid")`（运行时按字符串找组件）→ 筛选区布局塌陷。补 import 后产物变为静态导入 | `TransactionsView.vue` |
+| 17 | **行内支出金额显示 `+¥50.00`** | 库里支出金额存正数，而 `AmountDisplay` 的 `fmtAmount(cents, sign=true)` 对正数恒加 `+`。老版 `txn-list.ejs` 是**按 `is_income`/`is_expense` 显式决定符号**。新增 `signedAmount(t)`：支出取 `-Math.abs`、收入取 `Math.abs`、中性保持原值 | `TxnList.vue` |
+| 18 | **日小计显示 `++¥123.00`** | 外层已有 `+`/`-` 前缀，`AmountDisplay` 又传了 `sign=true` → 双前缀。改 `sign=false` | `TxnList.vue` |
+
+**B. 统计口径修正**
+
+| # | 问题 | 改法 |
+|---|---|---|
+| 19 | **日小计与汇总行数字对不上** | 前端原用 `is_income`/`is_expense`（余额方向宽口径，含 borrow/lend/repay）自行累加日小计；后端 `sum` 用严格口径（`INCOME_TYPES = income/interest/refund/reimburse`、`EXPENSE_TYPES = expense/fee`）。**改为直接消费后端 `groupByDate` 返回的 `data.groups`**，口径与汇总行天然一致 |
+
+> 口径分层说明：收支统计用 `INCOME_TYPES`/`EXPENSE_TYPES`；UI 符号与配色用 `decorate()` 的 `is_income`/`is_expense`（含借贷类）。两者用途不同，不可混用。已在 `utils/txnTypes.ts` 补 `INCOME_STAT_TYPES` / `EXPENSE_STAT_TYPES` 常量作为前端单一来源。
+
+**C. 老版有、新版缺的功能补齐**
+
+| # | 问题 | 改法 |
+|---|---|---|
+| 20 | 分类下拉是扁平列表 | 改 `NSelect` 分组（`type: 'group'`）：「支出」「收入」两组，父级前缀 `📁`，子级全角空格缩进 —— 对齐老版 `optgroup` |
+| 21 | 汇总行缺「导出」入口 | 汇总行改 `justify-content: space-between`，右侧加 `NButton quaternary` 跳 `/export`（老版 `transactions.ejs` 第 90 行） |
+| 22 | 缺「全选本页」 | 列表卡顶部补 `NCheckbox`（含 `indeterminate` 半选态）+「勾选后可用下方批量操作」提示，对应老版 `#bulk-all` |
+| 23 | 批量「改分类 / 加标签」有函数无 UI | 补 `NSelect`（`bulkCategoryOptions`，只列二级分类带父级路径）+「应用」按钮；`NInput` 标签名 +「加标签」按钮 |
+| 24 | 分页只有「上一页 / N / M / 下一页」 | 新增 `pageNumbers` computed：首页 + 省略号 + 当前页前后各 2 页 + 省略号 + 末页，对齐老版 pager |
+| 25 | 每页条数与老版不一致 | 前端 50 → **40**（老版 `f.pageSize = 40`） |
+| 26 | 分类名不可点 | 老版分类名是 `<a class="txn-cat" href="/transactions?category_id=...">`。`TxnList` 新增 `filter-category` 事件，分类名改可点击 `<a>`（hover 变主色），点击后本页设 `categoryId` + `page = 1` |
+
+**D. `TxnList.vue` 行内细节（组件全站共用，同时影响 B1 总览页与 D2 账户详情页）**
+
+| # | 问题 | 改法 |
+|---|---|---|
+| 27 | 报销徽标状态判断错 | 原来按 `status === 'pending'` 判断可报销；老版按 **`reimbursed_at`** 区分「已报销 / 待报销」。`TxnItem` 补 `reimbursed_at` 字段，徽标按其有无显示 `已报销`（success）/ `待报销`（warning） |
+| 28 | 「待入账」文案不符 | 改回老版「**待确认**」；且与报销徽标由 `v-else-if` 改为各自独立 `v-if`（两者可同时出现） |
+| 29 | 附件徽标位置错 | `📎 N` 从 title 行移回 **sub 行**（老版位置） |
+| 30 | 商家带 `@` 前缀 | 去掉 `@`，直接显示商家名 |
+| 31 | 备注位置错 | `note` 从 sub 行移到 **title 行**，与商家名并列（老版 note 与 merchant 同在 title 行） |
+| 32 | 账户名无兜底 | 兜底文案改老版「**未指定账户**」，sub 行不再用 `v-if` 裁剪（保证行高一致） |
+| 33 | 相对日期缺口径 | `relLabel` 补老版 `helpers.relDate` 口径：「今天 / 昨天 / **前天** / M月D日 / **跨年 YYYY年M月D日**」 |
+
+**遗留（不属于 B3）**：`SettingsView.vue` 同样存在 `<NGrid>` 未 import 的问题（属 F4 设置页范围），待 F4 一并修复。
+
+**B3 第三轮修复（2026-10-21，分页样式）**
+
+用户反馈分页区「看着别扭」，对照老版 `.pager` 样式修正。
+
+| # | 问题 | 改法 |
+|---|---|---|
+| 34 | 「上一页 / 下一页」用 naive `NButton`，与数字页码按钮风格割裂 | 老版 `.pager` 内所有元素（上一页 / 页码 / 下一页）走**同一套** `.pager a` 样式。改为原生 `<button class="pg">`，与页码按钮完全同款：白底 + 1px 边框 + 7px 圆角（对齐老版 `--radius-xs`）+ 32px 方形 |
+| 35 | 「上一页 / 下一页」恒显、禁用态灰 | 老版是**按需出现**（`page > 1` 才显示上一页，`page < total` 才显示下一页），无禁用态。改为条件渲染 |
+| 36 | 省略号渲染成裸文字，宽度塌陷 | 老版 `.pager .gap` 同样是 32px 方形占位（`border: 0; background: transparent`），保持与其他按钮等高对齐，补 `min-width/height/grid` |
+| 37 | 页码窗口算法与老版不同 | 老版是**固定 5 页滑动窗口**：`start = max(1, cur-2)`、`end = min(total, start+4)`、`start = max(1, end-4)`；首页仅在 `start > 1` 时单独列出，末页仅在 `end < total` 时单独列出。新版旧算法在首页只显示 3 页、末页少 1 页，改为完全同构 |
+| 38 | 按钮字体不继承 | `.pg` 补 `font-family: inherit`（原生 button 默认不继承） |
+
 **B2 修复补充（2026-10-19 截图反馈后小修）**
 
 | # | 问题 | 改法 | 影响文件 |
@@ -281,3 +339,5 @@ B1 第二轮修复（用户截图反馈后）：
 | 2026-10-19 | B2+ | 截图反馈 3 处小修：表单行距统一 10px、可报销开关改横排、分类浮层补背景 |
 | 2026-10-19 | B3 | 账单明细 15 项（详见上表），含后端 `sum` 透传、`reimbursable=1` 归一化、chips/汇总/分页/筛选/批量报销/行内按钮全量补齐。**待确认** |
 | 2026-10-19 | A3 | **退出登录 403**：store 里 `fetch`+`FormData`（multipart）不被 `express.urlencoded` 解析，CSRF token 丢失；`logout()`/`switchLedger()` 改用 `URLSearchParams`，顺带修复切账本静默失效。**待确认** |
+| 2026-10-21 | B3-2 | 账单明细第二轮 19 项（详见上表）。**3 个隐性缺陷**：`NGrid`/`NGridItem` 未 import 导致筛选网格运行时失效、支出金额误显 `+¥50.00`、日小计 `++` 双前缀；**口径修正**：日小计改用后端 `groupByDate` 结果，与汇总行 `sum` 对齐；**功能补齐**：分类下拉 optgroup 层级、汇总行导出入口、全选本页、批量改分类/加标签、pager 页码列表、pageSize 40、分类名可点筛选；**TxnList 行内细节** 8 项（报销徽标按 `reimbursed_at`、待确认文案、附件徽标位置、商家去 `@`、备注位置、账户兜底、`relLabel` 补前天/跨年）。`npm run build` 0 错误。**待确认** |
+| 2026-10-21 | B3-3 | 分页样式对齐老版 5 项：上一页/下一页由 naive `NButton` 改原生 `<button class="pg">`（与页码同款白底边框 7px 圆角）、改按需出现而非禁用恒显、省略号补 32px 方形占位、页码窗口改老版固定 5 页滑动算法、按钮补 `font-family: inherit`。`npm run build` 0 错误。**待确认** |
