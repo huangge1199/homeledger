@@ -7,11 +7,21 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { DatabaseSync } = require('node:sqlite');
 
-const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', 'data');
+// 相对路径按项目根目录解析，避免依赖启动时的 cwd；绝对路径原样使用（容器内 /data）
+const RAW_DATA_DIR = process.env.DATA_DIR || 'data';
+const DATA_DIR = path.isAbsolute(RAW_DATA_DIR)
+  ? path.normalize(RAW_DATA_DIR)
+  : path.resolve(__dirname, '..', RAW_DATA_DIR);
 const DB_FILE = path.join(DATA_DIR, 'homeledger.db');
 
-fs.mkdirSync(DATA_DIR, { recursive: true });
-fs.mkdirSync(path.join(DATA_DIR, 'uploads'), { recursive: true });
+try {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  fs.mkdirSync(path.join(DATA_DIR, 'uploads'), { recursive: true });
+} catch (e) {
+  console.error(`[db] 无法创建数据目录 ${DATA_DIR}：${e.message}`);
+  console.error('[db] 请检查 .env 中的 DATA_DIR 配置（容器部署用 /data，本地运行用 ./data）');
+  throw e;
+}
 
 let db = new DatabaseSync(DB_FILE);
 db.exec('PRAGMA journal_mode = WAL;');
