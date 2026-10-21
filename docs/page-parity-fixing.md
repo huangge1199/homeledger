@@ -83,9 +83,9 @@ A1 已修复内容：
 |---|---|---|---|---|---|
 | B1 | 总览 | `dashboard.ejs` | `DashboardView.vue` | 已确认 | 见下方修复清单 |
 | B2 | 记一笔 / 编辑 | `txn-form.ejs` | `TxnFormView.vue` | 已确认 | 见下方修复清单；2026-10-19 补 3 处小修（行距/开关/分类浮层）已并入确认 |
-| B3 | 账单明细 | `transactions.ejs` | `TransactionsView.vue` | 待确认 | 见下方修复清单（第一轮 15 项 + 第二轮 19 项 + 第三轮 5 项） |
-| B4 | 记录详情 | — | `TxnDetailView.vue` | 待修 | 新增页，重点核字段与附件展示 |
-| B5 | 记账日历 | `calendar.ejs` | `CalendarView.vue` | 待修 | |
+| B3 | 账单明细 | `transactions.ejs` | `TransactionsView.vue` | 已确认 | 见下方修复清单（第一轮 15 项 + 第二轮 19 项 + 第三轮 5 项 + 第四轮 4 项） |
+| B4 | 记录详情 | — | `TxnDetailView.vue` | 已确认 | 新增页（老版是弹窗，非独立页），详见下方修复清单 |
+| B5 | 记账日历 | `calendar.ejs` | `CalendarView.vue` | 已确认 | 见下方修复清单（第一轮 9 项 + 第二轮 8 项） |
 | B6 | AI 截图记账 | `ai.ejs` | `AiView.vue` | 待修 | |
 | B7 | 截图库 | `attachments.ejs` | 缺独立页 | 待修 | 老版有 `/attachments` 图库页 + 分页；新版无路由 |
 
@@ -244,6 +244,25 @@ B1 第二轮修复（用户截图反馈后）：
 | 37 | 页码窗口算法与老版不同 | 老版是**固定 5 页滑动窗口**：`start = max(1, cur-2)`、`end = min(total, start+4)`、`start = max(1, end-4)`；首页仅在 `start > 1` 时单独列出，末页仅在 `end < total` 时单独列出。新版旧算法在首页只显示 3 页、末页少 1 页，改为完全同构 |
 | 38 | 按钮字体不继承 | `.pg` 补 `font-family: inherit`（原生 button 默认不继承） |
 
+**B3 第四轮修复（2026-10-21，用户验收反馈）**
+
+| # | 问题 | 改法 | 影响文件 |
+|---|---|---|---|
+| 39 | 明细行缺消费时刻 | 后端 `txn_time` 字段（`HH:mm:ss`）一直有，前端 `TxnList` 也早写好了 `itemTime()`，但**从未在模板里用过**。在 sub 行「成员」后补时间显示（`tabular-nums` 等宽对齐） | `TxnList.vue` |
+| 40 | 编辑/删除按钮在金额右侧 | 按用户要求挪到**金额左侧**。`.act` 补 `margin-left: auto` 保持右对齐不挤压主区 | `TxnList.vue` |
+| 41 | 账户详情页明细缺时间/标签/报销状态 | `AccountDetailView` 的 `toItem` 映射漏了 `txn_time` / `tag_names` / `reimbursed_at` 三个字段，补齐 | `AccountDetailView.vue` |
+| 42 | 账户详情接口不返回附件数 | `GET /api/v1/accounts/:id` 漏了 `att.attachCounts(rows)`，导致账户详情页的 📎 徽标不显示。补上（与交易列表接口一致，一次查询避免 N+1） | `src/routes/api.v1.accounts.js` |
+
+> 说明：第 40 项是**主动偏离老版** —— 老版 `.txn-act` 在金额右侧（列序 icon / main / amt / act），按用户要求调整为金额左侧。
+
+**三个 `TxnList` 使用方的字段齐备性核对**（组件全站共用，缺一不可）：
+
+| 使用方 | 字段来源 | `txn_time` | `tag_names` | `reimbursed_at` |
+|---|---|---|---|---|
+| `TransactionsView`（B3 列表） | 显式 `toItem` 映射 | 已映射 | 已映射 | 已映射 |
+| `AccountDetailView`（D2） | 显式 `toItem` 映射 | **本轮补** | **本轮补** | **本轮补** |
+| `DashboardView`（B1 最近记录） | `{ ...r }` 透传 | 自动带过 | 自动带过 | 自动带过 |
+
 **B2 修复补充（2026-10-19 截图反馈后小修）**
 
 | # | 问题 | 改法 | 影响文件 |
@@ -251,6 +270,85 @@ B1 第二轮修复（用户截图反馈后）：
 | 1 | 表单字段行距不统一 | 主表单行距 20px → 10px；多币种折叠区按同值同步；可报销行后离间距缩小 | `TxnFormView.vue` |
 | 2 | 可报销开关右对齐、文字独占一行 | 改用 `field-row`（横向 flex），开关靠左、文字在右侧 10px 间距，容器宽度不再 100% 拉伸 | `TxnFormView.vue` |
 | 3 | 分类浮层背景透明 | `NPopover` 开了 `raw` 不渲染外壳，给 `.cat-panel` 补背景 / 边框 / 圆角 / 阴影 | `CategorySelect.vue` |
+
+#### B4 记录详情修复（2026-10-21）
+
+**性质**：老版**没有独立详情页** —— 老版点列表行是弹 JS 模态框（`public/js/app.js:906-977` `showTxnDetail`），数据走 `GET /transactions/:id/json`。新版把它做成了独立路由页 `/transactions/:id`（路由早已预留，此前是 15 行占位页）。因此本轮是**以老版弹窗为字段基准**，在新版独立页上落地。
+
+后端能力齐备，**无需改动后端**：`GET /api/v1/transactions/:id` 已返回 `{ txn, attachments, splits }`（`src/routes/api.v1.transactions.js:83-88`），一次请求即可拿全。
+
+| # | 问题 | 改法 | 影响文件 |
+|---|---|---|---|
+| 1 | 页面是占位页（「阶段 3 实现中」） | 重写为完整详情页 | `TxnDetailView.vue` |
+| 2 | 缺头部金额区 | 补头部卡：分类图标（圆形底色用 `category_color` 18% 透明度）+ 名称 + 类型·日期副标题 + 大号带符号金额 + 非 CNY 币种后缀。金额符号按老版口径（`is_income` 加 `+`、`is_expense` 取负），`adjust` 类型不加符号 | `TxnDetailView.vue` |
+| 3 | 缺详细信息键值区 | 按老版弹窗逐行补齐 13 项：日期 / 类型 / 分类（转账不显）/ 账户（转账·投资显示双边 `A → B`）/ 成员 / 商家 / 备注 / 标签 / 原币金额（`X CUR × rate ≈ Y CNY`）/ 报销 / 状态 / 来源 / 创建时间 / 最后修改 | `TxnDetailView.vue` |
+| 4 | 来源显示英文枚举 | 补中文映射（老版 `TXN_SOURCE_LABEL`）：手动 / AI 截图 / AI 文本 / 导入 / 周期账单 / 订阅 | `TxnDetailView.vue` |
+| 5 | 缺 AA 分账展示 | 补分账卡：成员名 + 金额（`share_cents/100`）+ 已结算/未结算徽标。**老版弹窗没有此区块**（老版单笔接口不返回 splits），新版接口已返回，属能力增强 | `TxnDetailView.vue` |
+| 6 | 缺附件画廊 | 补截图卡：3:4 封面网格 + 图注（采集时间 · KB），字段用 `file_name` / `url`（**不是** `filename` / `path`） | `TxnDetailView.vue` |
+| 7 | 附件无法放大 | 老版有 `openZoom` 全屏遮罩放大。新版用 naive `NImage` 内置预览（`preview-props.showToolbar`），能力对等且支持工具栏 | `TxnDetailView.vue` |
+| 8 | 缺写操作入口 | 顶部操作区补「编辑」（跳 `/transactions/:id/edit`）与「删除」（`NPopconfirm` 二次确认，删后跳回列表）。两者按 `session.canWrite` 门控 —— 老版靠 DOM 有无 `[data-del-txn]` 推断，新版有明确权限 getter | `TxnDetailView.vue` |
+| 9 | 缺空态与错误态 | 记录不存在（404）显示 `Empty` 空态卡；加载中用 `NSpin` 包裹 | `TxnDetailView.vue` |
+| 10 | 报销徽标不区分状态 | 按 `reimbursed_at` 区分「已报销」（success，附报销时间）/「待报销」（warning），与 B3 列表口径一致 | `TxnDetailView.vue` |
+| 11 | **编辑页标签回填失效（会丢数据）** | 根因：后端只返回 `tag_names`（空格分隔字符串），**没有 `tags` 字段**；`TxnFormView.vue:183` 却读 `tx.tags` → 恒为 undefined → 标签框空。用户从详情页点「编辑」再保存，**原标签被清空**（后端 `updateTransaction` 走 `applyTags(..., replace=true)`，先删后建）。改读 `tx.tag_names` | `TxnFormView.vue` |
+
+**闭环验证**（真实库数据核对）：`GET /api/v1/transactions/:id` 返回字段与页面消费一一对应 —— `category_path`（如「餐饮/饮料」）、`tag_names`、`is_income/is_expense`、`type_label/type_icon/type_color`、`reimbursed_at`、`amount_base_cents` 齐备；附件 `url` 直接是 `/uploads/...` 静态路径（后端 `attachments.js:38` `webUrl()` 已算好），`NImage` 可直用；`splits` 为 `[{member_name, share_cents, is_settled, settled_at}]`。
+
+**入口闭环**：列表页点行 → `/transactions/:id`（详情）；详情页点「编辑」→ `/transactions/:id/edit`；编辑页保存 → `router.replace('/transactions/:id')` 回到详情。
+
+#### B5 记账日历修复（2026-10-21）
+
+后端 `GET /api/v1/dashboard/calendar` 已返回 `{month, monthLabel, cells, days, monthSummary, maxExpense, selected, selectedRows, weekdays}` —— 热力图与 TOP5 所需数据（`days` 每日收支、`maxExpense`）**齐备，无需改后端**。
+
+| # | 问题 | 改法 | 影响文件 |
+|---|---|---|---|
+| 1 | **日历格金额精度丢失** | 原 `(c.expense / 100).toFixed(0)` 强制取整 —— 11.50 元显示成「12」、128.80 元显示成「129」。老版用 `fmtAmount(cents, c.expense >= 100000 ? 0 : 2)`（≥1000 元才省小数）。在 `utils/money.ts` 新增 `fmtPlain(cents, decimals)`（对应老版 `util.js` 的 `fmtAmount`，无 ¥ 符号、小数位可变），日历格改用它 | `money.ts`、`CalendarView.vue` |
+| 2 | **缺「本月热力分布」** | 老版有 `charts.calendarHeatmap` SVG 热力图（格底色按支出占比加深 6%~22%、今天主色描边、格内收支双行、`<title>` 悬浮提示）。新版补 `heatSvg` computed 直接生成同构 SVG | `CalendarView.vue` |
+| 3 | **缺「本月支出 TOP 5」** | 老版有排行条形图（`charts.rankBars`，取本月支出最高的 5 天）。新版补 `top5` / `top5Max` computed + `.rank-row` 样式（序号 / 日期 / 进度条 / 金额），空态「本月暂无支出」 | `CalendarView.vue` |
+| 4 | 选中日卡缺当日小计 | 老版侧栏有「支出 / 收入」当日合计（按 `amount_base_cents` 累加）。新版补 `daySum` computed + `.day-sum` 行 | `CalendarView.vue` |
+| 5 | 选中日卡缺「＋ 补记」入口 | 老版侧栏有「＋ 补记」按钮跳 `/transactions/new?date=<选中日>`。新版补按钮（`session.canWrite` 门控） | `CalendarView.vue` |
+| 6 | 选中日标题非相对日期 | 老版标题是 `relDate(selected)`（今天/昨天/前天/10月21日）+ 星期。新版原为硬编码 `📅 2026-10-21 的交易`。补 `selectedTitle` / `selectedWeekday` computed | `CalendarView.vue` |
+| 7 | **新建页不支持 `?date=` 预填** | 老版 `/transactions/new?date=xxx` 会把日期预填进表单（补记场景的核心行为）。新版 `TxnFormView` 不读 query，导致「补记」跳过去还是今天。补：新建模式读 `route.query.date`，格式校验 `YYYY-MM-DD` 后写入 | `TxnFormView.vue` |
+| 8 | 星期表头非响应式（真 bug） | `const dayNames = data.value?.weekdays` 是**普通赋值而非 computed** —— 首屏 `data` 还是 null，接口返回后表头**永远不会更新**，永远显示兜底值。改为 `computed` | `CalendarView.vue` |
+| 9 | 死代码 + 多余请求 | `Empty` / `NIcon` / `NDivider` / `NTag` / `txnColumns` / `totalDays` / `categories` / `accounts` / `loadOptions` 全部定义未用；其中 `loadOptions()` 每次进页面多打一次 `/transactions/-form-data` 请求。全部清理 | `CalendarView.vue` |
+
+**视觉对齐（老版 `.cal-cell` / `.cal-nav`）**：
+
+| 项 | 老版 | 新版（原） | 新版（现） |
+|---|---|---|---|
+| 日历格圆角 | 10px | 4px | 10px |
+| 日历格最小高度 | 62px | 70px | 62px |
+| 热力表现 | `color-mix` 平铺，4%~16% | 线性渐变，0%~100%（过重） | `color-mix` 平铺，4%~16% |
+| 空白格 | 透明无边框 | 灰底 | 透明无边框 |
+| 今日描边 | 1.6px 主色 | 2px | 1.6px 主色 |
+| hover | 边框主色 + 3px 主色光环 | 仅边框变色 | 边框主色 + 3px 光环 |
+| 月份标题 | 16px 粗体、居中、最小宽 110px | 16px 常规、跟在按钮后 | 16px 粗体、居中、导航条中间 |
+| 「本月」按钮 | 文案「本月」 | 文案「今」 | 文案「本月」 |
+
+**热力图起始星期口径**：老版 `u.firstWeekday` = `getDay()`（**周日=0**），与 `WEEKDAYS`（周日/周一/…）表头同序。后端 `cells` 排布亦用此口径 —— 热力图曾按「周一开始」写会导致两图错位，已改为周日=0。同时把 `dayNames` 的兜底值从「一二三四五六日」修正为「周日…周六」。
+
+**数据自检**（ledger 2，2026-10）：`days` 19 条、`maxExpense` = 175300、TOP5 = 10-01 / 10-17 / 10-03 / 10-04 / 10-02，`firstWeekday('2026-10')` = 4 与 `getDay()` 一致，`monthLabel` = 「2026年10月」。
+
+**B5 第二轮修复（2026-10-21，用户提供老版截图对照）**
+
+用户反馈：「图片是旧版本的样子，新版本的样式有区别，按照旧版本的改正下」。逐项比对老版截图后调整：
+
+| # | 差异 | 改法 |
+|---|---|---|
+| 1 | **整体布局是上下堆叠，老版是左右两栏** | 老版 `.grid-main` = `minmax(0,1.6fr) minmax(0,1fr)`。新版改为两栏：左栏 = 日历视图 + 本月热力分布；右栏 = 当日详情 + 本月支出 TOP。窄屏（≤1100px）塌成单栏 |
+| 2 | **月汇总做成了 4 个 StatCard，老版在月导航条右侧** | 老版 `cal-nav` 右侧是「支出 / 收入 / 结余」三段文字（`monthSummary.net` 由后端 `txn.summary()` 直接给出）。删除 4 个 StatCard，改到导航条右侧，支出红 / 收入绿 / 结余按正负上色 |
+| 3 | 月导航条按钮形态不对 | 老版是「`‹` 月份标题 `›`」紧邻一组 + 「本月」独立按钮（`btn-ghost`）。新版改为 `‹` / `›` 小箭头按钮（quaternary）+ 16px 粗体月份标题（最小宽 110px 居中），「本月」保持 ghost 风格 |
+| 4 | 日历格缺标题行与提示 | 补 `.card-head`「日历视图」+ 右侧提示「点某一天看当天明细」；格下方补脚注「颜色越深表示当天支出越多 · 蓝色边框是今天」 |
+| 5 | 空态用 naive `NEmpty`，与全站风格不一 | 老版是 `<div class="empty"><span class="big">📭</span>这天还没有记录</div>`。改用同款：📭 大图标 + 文案，补 `.empty` 样式（36px 图标、居中、`padding: 22px 8px`） |
+| 6 | 日历格间距与表头字号偏差 | 栅格 `gap` 4→6px；表头字号 12→11.5px、字重 500→600（对齐老版 `.cal-head`） |
+| 7 | 清理失效导入 | `NSpace` / `NEmpty` / `NGrid` / `NGridItem` / `StatCard` 在重排后已不再使用，全部移除 |
+| 8 | 右栏缺吸附 | 老版当日详情卡是 `card sticky-side`（滚动时吸附在视口顶部）。新版给 `.day-detail` 补 `position: sticky; top: 14px`，窄屏取消 |
+
+**两栏布局与老版的对应关系**：
+
+| 位置 | 老版 | 新版 |
+|---|---|---|
+| 左栏 | 日历视图（`card`）+ 本月热力分布（`card`） | 同 |
+| 右栏 | 当日详情（`card sticky-side`，滚动时吸附）+ 本月支出 TOP（`card` 不吸） | 同 |
 
 ---
 
@@ -340,4 +438,8 @@ B1 第二轮修复（用户截图反馈后）：
 | 2026-10-19 | B3 | 账单明细 15 项（详见上表），含后端 `sum` 透传、`reimbursable=1` 归一化、chips/汇总/分页/筛选/批量报销/行内按钮全量补齐。**待确认** |
 | 2026-10-19 | A3 | **退出登录 403**：store 里 `fetch`+`FormData`（multipart）不被 `express.urlencoded` 解析，CSRF token 丢失；`logout()`/`switchLedger()` 改用 `URLSearchParams`，顺带修复切账本静默失效。**待确认** |
 | 2026-10-21 | B3-2 | 账单明细第二轮 19 项（详见上表）。**3 个隐性缺陷**：`NGrid`/`NGridItem` 未 import 导致筛选网格运行时失效、支出金额误显 `+¥50.00`、日小计 `++` 双前缀；**口径修正**：日小计改用后端 `groupByDate` 结果，与汇总行 `sum` 对齐；**功能补齐**：分类下拉 optgroup 层级、汇总行导出入口、全选本页、批量改分类/加标签、pager 页码列表、pageSize 40、分类名可点筛选；**TxnList 行内细节** 8 项（报销徽标按 `reimbursed_at`、待确认文案、附件徽标位置、商家去 `@`、备注位置、账户兜底、`relLabel` 补前天/跨年）。`npm run build` 0 错误。**待确认** |
-| 2026-10-21 | B3-3 | 分页样式对齐老版 5 项：上一页/下一页由 naive `NButton` 改原生 `<button class="pg">`（与页码同款白底边框 7px 圆角）、改按需出现而非禁用恒显、省略号补 32px 方形占位、页码窗口改老版固定 5 页滑动算法、按钮补 `font-family: inherit`。`npm run build` 0 错误。**待确认** |
+| 2026-10-21 | B3-3 | 分页样式对齐老版 5 项：上一页/下一页由 naive `NButton` 改原生 `<button class="pg">`（与页码同款白底边框 7px 圆角）、改按需出现而非禁用恒显、省略号补 32px 方形占位、页码窗口改老版固定 5 页滑动算法、按钮补 `font-family: inherit`。`npm run build` 0 错误。**已确认** |
+| 2026-10-21 | B4 | 记录详情页从占位页重写为完整实现（11 项，详见上表）。老版无独立详情页（是弹窗），以老版弹窗字段为基准落到新版独立路由页；后端 `GET /api/v1/transactions/:id` 已返回 `{txn, attachments, splits}`，**无需改后端**。含头部金额区、13 项键值信息、AA 分账卡、附件画廊 + `NImage` 放大、编辑/删除（`canWrite` 门控）、404 空态。**顺带修一处会丢数据的 bug**：`TxnFormView` 读 `tx.tags` 回填标签，而后端只返回 `tag_names` → 编辑保存会清空原标签。`npm run build` 0 错误。**已确认** |
+| 2026-10-21 | B3-4 | 用户验收反馈 4 项：明细行补消费时刻（`txn_time`，前端 `itemTime()` 早有但从未在模板使用）、编辑/删除按钮挪到金额左侧（`.act` 补 `margin-left:auto`）、`AccountDetailView` 的 `toItem` 补 `txn_time`/`tag_names`/`reimbursed_at`、后端 `GET /api/v1/accounts/:id` 补 `att.attachCounts(rows)` 恢复 📎 徽标。`npm run build` 0 错误，后端 `node --check` + 数据自检通过。**已确认** |
+| 2026-10-21 | B5 | 记账日历 9 项（详见上表）：补「本月热力分布」SVG 热力图与「本月支出 TOP 5」排行条（老版有、新版缺）、修日历格金额强制取整（`toFixed(0)` → 新增 `fmtPlain`）、补选中日当日小计与「＋ 补记」入口、标题改相对日期+星期、`TxnFormView` 补 `?date=` 预填（老版补记行为）、修星期表头非响应式真 bug、清理 9 处死代码与 1 次多余请求、视觉对齐老版 `.cal-cell`/`.cal-nav`（圆角/热力口径/空白格/hover/月标题/按钮文案）。后端 `/dashboard/calendar` 数据齐备，**无需改后端**。`npm run build` 0 错误，无诊断。**待确认** |
+| 2026-10-21 | B5-2 | 用户提供老版截图对照，改版式 8 项：整体改**左右两栏**（老版 `.grid-main` 1.6fr/1fr，左=日历+热力图、右=当日详情+支出TOP）、删 4 个 StatCard 把月汇总「支出/收入/结余」移进月导航条右侧、月导航改「‹ 标题 › + 本月」形态、补日历卡标题与提示脚注、空态改老版 📭 图标样式、栅格间距/表头字号对齐、清理 5 个失效导入、`.day-detail` 补 sticky 吸附。`npm run build` 0 错误，无诊断。**已确认** |

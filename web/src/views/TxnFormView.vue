@@ -180,7 +180,8 @@ async function load() {
       categoryId.value = tx.category_id
       merchant.value = tx.merchant || ''
       note.value = tx.note || ''
-      tags.value = tx.tags ? String(tx.tags).split(/[,，\s]+/).filter(Boolean) : []
+      // 后端列表/详情只返回 tag_names（空格分隔），没有 tags 字段
+      tags.value = tx.tag_names ? String(tx.tag_names).split(/[,，\s]+/).filter(Boolean) : []
       isReimbursable.value = !!tx.is_reimbursable
       status.value = tx.status || 'cleared'
       currency.value = tx.currency || 'CNY'
@@ -197,6 +198,10 @@ async function load() {
         amount: s.share_cents ? (Number(s.share_cents) / 100).toFixed(2) : '',
       }))
     } else {
+      // 新建模式：支持 URL 预填（老版 /transactions/new?date=... 的补记行为）
+      // 目前仅 date，其余字段保持默认
+      const qDate = String(route.query.date || '')
+      if (/^\d{4}-\d{2}-\d{2}$/.test(qDate)) date.value = qDate
       // 默认账户：取第一个
       if (accounts.value.length) accountId.value = Number(accounts.value[0].id)
     }
