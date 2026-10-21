@@ -191,6 +191,8 @@ function isPrimarySource(s?: string) {
                 <span class="sep">·</span>
                 <NText depth="3" class="member">{{ t.member_name }}</NText>
               </template>
+              <!-- 消费时刻（后端 txn_time，可空） -->
+              <NText v-if="itemTime(t)" depth="3" class="time">{{ itemTime(t) }}</NText>
               <template v-for="(tg, i) in tagList(t.tag_names)" :key="i">
                 <NTag size="tiny" :bordered="false" type="primary" class="tag">{{ tg }}</NTag>
               </template>
@@ -203,17 +205,7 @@ function isPrimarySource(s?: string) {
               <NTag v-if="sourceChip(t.source)" size="tiny" :type="isPrimarySource(t.source) ? 'primary' : 'default'" :bordered="false">{{ sourceChip(t.source) }}</NTag>
             </div>
           </div>
-          <div class="amount-col">
-            <span v-if="t.type === 'transfer'" class="transfer">→</span>
-            <AmountDisplay
-              v-else
-              :cents="signedAmount(t)"
-              :tone="t.is_expense ? 'expense' : t.is_income ? 'income' : 'neutral'"
-              :sign="t.is_income || t.is_expense"
-            />
-            <NText v-if="t.currency && t.currency !== 'CNY'" depth="3" class="cur">{{ t.currency }}</NText>
-          </div>
-          <!-- 行内操作：与老版 .txn-act 同构（编辑 + 删除） -->
+          <!-- 行内操作：与老版 .txn-act 同构（编辑 + 删除），置于金额左侧 -->
           <div v-if="showActions && !bulk" class="act" @click.stop>
             <NButton size="tiny" quaternary title="编辑" aria-label="编辑" @click="emit('edit', t)">
               <span class="ico-btn">✏️</span>
@@ -230,6 +222,16 @@ function isPrimarySource(s?: string) {
               </template>
               确定要删除「{{ t.merchant || t.category_name || t.type_label || '这条记录' }}」吗？
             </NPopconfirm>
+          </div>
+          <div class="amount-col">
+            <span v-if="t.type === 'transfer'" class="transfer">→</span>
+            <AmountDisplay
+              v-else
+              :cents="signedAmount(t)"
+              :tone="t.is_expense ? 'expense' : t.is_income ? 'income' : 'neutral'"
+              :sign="t.is_income || t.is_expense"
+            />
+            <NText v-if="t.currency && t.currency !== 'CNY'" depth="3" class="cur">{{ t.currency }}</NText>
           </div>
         </div>
       </div>
@@ -282,12 +284,13 @@ function isPrimarySource(s?: string) {
 .sub .acc, .sub .acc-pair, .sub .member, .sub .note { font-size: 12px; }
 .sub .tag { font-size: 11px; }
 .sub .sep { color: var(--hl-muted, #b8bfc9); margin: 0 1px; }
+.sub .time { font-size: 12px; font-variant-numeric: tabular-nums; }
 .amount-col { text-align: right; min-width: 80px; display: flex; flex-direction: column; align-items: flex-end; gap: 2px; flex: 0 0 auto; }
 .amount-col .transfer { color: var(--hl-muted); font-size: 16px; }
 .amount-col .cur { font-size: 10px; }
 
-/* 行内操作 */
-.act { display: flex; gap: 2px; flex: 0 0 auto; opacity: 0; transition: opacity .15s; }
+/* 行内操作：置于金额左侧，靠右对齐 */
+.act { display: flex; gap: 2px; flex: 0 0 auto; opacity: 0; transition: opacity .15s; margin-left: auto; }
 .row:hover .act, .row:focus-within .act { opacity: 1; }
 .ico-btn { font-size: 13px; line-height: 1; }
 </style>

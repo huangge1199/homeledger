@@ -10,6 +10,7 @@ const { all, get, run, nowStr, todayStr, ACCOUNT_TYPE_MAP } = require('../db');
 const auth = require('../lib/auth');
 const api = require('../lib/api');
 const txn = require('../lib/txn');
+const attach = require('../lib/attachments');
 const u = require('../lib/util');
 
 /* ===================================================== 账户 ===================================================== */
@@ -52,6 +53,8 @@ accounts.get('/:id(\\d+)', auth.requireLogin, api.asyncHandler((req, res) => {
     sort: 'date_desc',
   };
   const result = txn.listTransactions(ledgerId, f);
+  // 补「关联了几张账单截图」，前端列表据此显示 📎 标记（与交易列表接口一致）
+  attach.attachCounts(result.rows);
   api.ok(res, { account: acc, f, items: result.rows, total: result.total, totalPages: result.pages, groups: txn.groupByDate(result.rows) });
 }));
 

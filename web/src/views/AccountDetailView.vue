@@ -53,6 +53,7 @@ const groups = computed(() => {
   const items: TxnItem[] = (data.value?.items || []).map((r: any) => ({
     id: r.id,
     txn_date: r.txn_date,
+    txn_time: r.txn_time,
     type: r.type,
     type_label: TXN_TYPE_MAP[r.type]?.label,
     type_icon: TXN_TYPE_MAP[r.type]?.icon,
@@ -73,6 +74,8 @@ const groups = computed(() => {
     tags: r.tags,
     status: r.status,
     is_reimbursable: r.is_reimbursable,
+    reimbursed_at: r.reimbursed_at,
+    tag_names: r.tag_names,
     attachment_count: r.attachment_count,
   }))
   const byDate: Record<string, { items: TxnItem[]; income: number; expense: number }> = {}
