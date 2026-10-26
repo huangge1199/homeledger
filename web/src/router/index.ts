@@ -78,6 +78,7 @@ const routes: RouteRecordRaw[] = [
   { path: '/settings/:tab',  component: () => import('@/views/SettingsView.vue'),       meta: { title: '设置', icon: '⚙️' } },
   { path: '/about',          component: () => import('@/views/AboutView.vue'),          meta: { title: '关于', icon: 'ℹ️' } },
   { path: '/ai',             component: () => import('@/views/AiView.vue'),             meta: { title: 'AI 截图记账', icon: '🤖' } },
+  { path: '/attachments',    component: () => import('@/views/AttachmentsView.vue'),    meta: { title: '账单截图', icon: '🖼️' } },
 
   { path: '/:catch(.*)*',    component: () => import('@/views/NotFoundView.vue'),       meta: { title: '页面未找到' } },
 ]

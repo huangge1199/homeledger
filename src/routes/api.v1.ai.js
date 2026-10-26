@@ -166,7 +166,8 @@ router.get('/attachments', auth.requireLogin, api.asyncHandler((req, res) => {
   const pageSize = 36;
   const total = Number(get('SELECT COUNT(*) AS c FROM attachments WHERE ledger_id = ?', ledgerId)?.c || 0);
   const rows = all(
-    `SELECT a.*, t.amount_cents, t.txn_date, t.merchant,
+    // linked_txn_id：关联交易「存在且未软删」时才非空，前端据此决定是否给出「查看记录」入口
+    `SELECT a.*, t.id AS linked_txn_id, t.amount_cents, t.txn_date, t.merchant,
             c.name AS category_name, c.icon AS category_icon
      FROM attachments a
      LEFT JOIN transactions t ON t.id = a.txn_id AND t.deleted_at IS NULL

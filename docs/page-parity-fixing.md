@@ -86,8 +86,8 @@ A1 已修复内容：
 | B3 | 账单明细 | `transactions.ejs` | `TransactionsView.vue` | 已确认 | 见下方修复清单（第一轮 15 项 + 第二轮 19 项 + 第三轮 5 项 + 第四轮 4 项） |
 | B4 | 记录详情 | — | `TxnDetailView.vue` | 已确认 | 新增页（老版是弹窗，非独立页），详见下方修复清单 |
 | B5 | 记账日历 | `calendar.ejs` | `CalendarView.vue` | 已确认 | 见下方修复清单（第一轮 9 项 + 第二轮 8 项） |
-| B6 | AI 截图记账 | `ai.ejs` | `AiView.vue` | 待确认 | 见下方修复清单（15 项，含 2 个隐性缺陷 + 2 条控制台警告修复）；「全部 →」指向的 `/attachments` 独立页待 B7 补齐 |
-| B7 | 截图库 | `attachments.ejs` | 缺独立页 | 待修 | 老版有 `/attachments` 图库页 + 分页；新版无路由 |
+| B6 | AI 截图记账 | `ai.ejs` | `AiView.vue` | 待确认 | 见下方修复清单（15 项，含 2 个隐性缺陷 + 2 条控制台警告修复）；「全部 →」指向的 `/attachments` 独立页已由 B7 补齐；**AI 识别主链路待 F4 配好 AI 后完整验证** |
+| B7 | 截图库 | `attachments.ejs` | `AttachmentsView.vue` | 待确认 | 见下方修复清单（新增独立页 + 路由 + 侧栏高亮 + 后端补 `linked_txn_id`） |
 
 B1 第一轮修复（后端 `/api/v1/dashboard` 数据本来就全，缺的是前端消费）：
 
@@ -378,7 +378,7 @@ B1 第二轮修复（用户截图反馈后）：
 
 **有意偏离老版一处**：草稿类型切到「转账」时隐藏并清空 `category_id`（老版转账仍会带分类），与后端 `createTransaction` 的转账校验（必须 account_id + to_account_id 且不同）方向一致。
 
-**已知遗留 1**：`/attachments` 独立页在新版无路由（`router/index.ts` 走 catch-all → `NotFoundView`），AI 页「识别历史」的「全部 →」当前会落到 404，需在 B7「截图库」补齐。
+**已知遗留 1**：~~`/attachments` 独立页在新版无路由~~ → **已在 B7 修复**（新增 `AttachmentsView.vue` + 路由 + 侧栏高亮映射），AI 页「识别历史」的「全部 →」现可正常跳转。
 
 **已知遗留 2（本次巡检发现，属 C2 范围）**：`/search` 页 `SearchView.vue` 白屏 —— `NDatePicker` 的 `v-model:value` 直接绑 `f.from` / `f.to`（初值 `''` 字符串），而 naive 的 `NDatePicker` 只接受毫秒时间戳（Number）→ 传 `''` 触发 `RangeError: Invalid time value`，setup 抛错导致整个组件不渲染（控制台 8 条警告/错误）。该页原状态就是「待修」，本次未动。**用户已确认：留到 C2 阶段与搜索筛选页一并修复**（根因与修法已同步记入下方 C 组表格的备注列）。
 
@@ -388,6 +388,40 @@ B1 第二轮修复（用户截图反馈后）：
 - 全站 30 个路由逐个巡检控制台，修复后仅剩 `/search` 一处白屏（上述遗留 2），其余页面控制台 0 警告 0 错误
 - AI 页：两栏布局正常，识别历史画廊渲染 3 张图（金额 4.00 / 647.88 / 647.88，与库内一致），三态提示显示「已连接模型 MiniMax-M3.1-Flash-Preview…视觉能力已开启」
 - 设置页「系统信息」tab：`NGrid` 渲染正常（`.n-grid` 存在，子项带 `grid-column: span 1 / span 1`），控制台 0 警告
+
+---
+
+#### B7 截图库修复（2026-10-26）
+
+以老版 `src/views/attachments.ejs`（36 行）+ `src/routes/ai.js` 的 `/attachments` 分页查询为行为基准。新版原状态是**完全没有这个页面**（`router/index.ts` 走 catch-all → `NotFoundView`），导致 B6 AI 页「识别历史」的「全部 →」点进去 404。
+
+| # | 问题 | 改法 | 影响文件 |
+|---|---|---|---|
+| 1 | **整个截图库页缺失** | 新建 `AttachmentsView.vue`，按老版结构实现：顶部「账单截图」标题 + 副标题；卡头「共 N 张截图，存放在服务器的 data/uploads 目录中」+ 右侧「＋ 上传新截图」链接；画廊网格；空态；分页 | `AttachmentsView.vue`（新建） |
+| 2 | **无 `/attachments` 路由** | `router/index.ts` 补路由 `path: '/attachments'`，`meta: { title: '账单截图', icon: '🖼️' }` | `router/index.ts` |
+| 3 | **侧栏无入口 / 高亮归属错位** | 老版 `attachments.ejs` 的 `activeNav: 'ai'` —— 截图库是「AI 截图记账」的子页，不是独立菜单项。新版侧栏不新增菜单项，改为：`AppShell` 的 `activeKey` 计算里把 `/attachments` 映射到 `/ai`；「AI」链接的 active 判断补 `route.path === '/attachments'`，使桌面侧栏与移动端底导在截图库页都高亮「AI」 | `AppShell.vue` |
+| 4 | **「查看记录」死链** | 老版图注里的「查看记录」直接指向 `a.txn_id`，若关联交易已被软删则跳到不存在的记录。后端 SQL 改为 `LEFT JOIN transactions t ON t.id = a.txn_id AND t.deleted_at IS NULL`，另取 `t.id AS linked_txn_id`；前端仅在 `linked_txn_id` 非空时才渲染「查看记录」入口 | `api.v1.ai.js`、`AttachmentsView.vue` |
+| 5 | 图注金额口径缺失 | 老版：`amount_cents != null ? fmtAmount : (ai_status === 'rule' ? '规则解析' : '未关联记录')`。前端 `captionTitle()` 同款实现（`fmtPlain` 无 ¥ 符号，与老版 `fmtAmount` 一致） | `AttachmentsView.vue` |
+| 6 | 图注信息不全 | 每格补齐三行：金额/状态、商家、日期·大小（`YYYY-MM-DD · N KB`，`fmtSize` 按 1024 换算取整） | `AttachmentsView.vue` |
+| 7 | 图片不能放大 | 用 `NImage` + `preview-props="{ showToolbar: true }"`，点击可全屏预览并带工具栏（老版 `img` 点击无放大，此为正向增强）；`lazy` 懒加载、`object-fit="cover"` 定高 132px | `AttachmentsView.vue` |
+| 8 | 缺删除确认与只读门控 | 每格「删除」用 `NPopconfirm`（positive-text「删除」/ negative-text「取消」，文案「删除这张截图？」），确认后调 `DELETE /api/v1/ai/attachments/:id`（后端已存在，`auth.requireLedgerWrite` 门控），成功后提示「截图已删除」并刷新；`!session.canWrite`（只读成员）不渲染删除按钮 | `AttachmentsView.vue` |
+| 9 | 缺分页 | 后端 `pageSize = 36`（与老版一致），返回 `{ items, page, total, pageSize, totalPages }`；前端分页器复用账单明细页**同款固定 5 页滑动窗口**算法 + `.pager/.pg/.cur/.gap` 样式；页码与 URL `?page=` 双向同步 | `api.v1.ai.js`、`AttachmentsView.vue` |
+| 10 | 删完最后一条后页码越界 | 加载后若当前页无数据且 `totalPages < 当前页`，自动回退到最后一页并重新加载 | `AttachmentsView.vue` |
+| 11 | 缺空态 | 用全站 `Empty` 组件：🖼️「还没有上传过账单截图」+ 说明 + 「去体验 AI 截图记账」按钮（跳 `/ai`），与老版空态行为一致 | `AttachmentsView.vue` |
+
+**有意偏离老版一处**：老版空态提示语为「还没有上传过账单截图」+「去体验 AI 截图记账」，新版补了一句说明「在 AI 截图记账页上传截图后，原图会留存在这里」；顶部副标题「AI 识别过的账单原图都存在这里，可随时回看」为新增文案。
+
+**已知遗留 1（既有数据状态，非本次改动引入）**：本机 `data/uploads` 目录**实际为空**（0 个文件），但 DB `attachments` 表仍有 3 条记录指向 `/uploads/202610/1792558843589_9iotdqpz.png` 等路径 → 页面图片 404（`GET /uploads/...` 落到 SPA fallback 返回 index.html）。已核对后端 `/uploads` 静态服务与前端 URL 拼接**均正确**（`att.webUrl()` 返回 `/uploads/${rel}`，页面 `src` 属性取值正确），属于此前清理过磁盘文件的既有状态，重新上传一次截图即可恢复，非代码缺陷。
+
+**验证**：`npm run build`（`vue-tsc --noEmit && vite build`）0 错误、exit 0，产物含 `AttachmentsView-*.js` / `AttachmentsView-*.css`；`GetDiagnostics` 无诊断；`node --check src/routes/api.v1.ai.js` 通过；真实库自检 ledger 2 的 3 条附件，`linked_txn_id` 分别为 4041 / 4027 / 4027（均等于自身 `txn_id`，即关联交易均未软删），`amount_cents` 400 / 64788 / 64788，`merchant` 与 `category_name` 正确。
+
+**浏览器实测**（Vite dev + 后端 5111 已运行，Chrome 实测）：
+- AI 页「识别历史」右下角「全部 →」点击后跳转到 `/attachments`，标题「账单截图」，卡头显示「共 3 张截图，存放在服务器的 data/uploads 目录中」，画廊渲染 3 个 `figure`
+- 3 格图注分别为 `4.00 / 邻家惠超市 超市购物 / 2026-10-21 · 70 KB`、`647.88 / 小米游戏 / 2026-10-19 · 29 KB`、`647.88 / 小米游戏 / 2026-10-19 · 41 KB`，与库内金额、商家、文件大小一致
+- 每格「查看记录」链接分别指向 `/transactions/4041`、`/transactions/4027`、`/transactions/4027`
+- 点击「删除」弹出确认框，文案「删除这张截图？」，按钮为「取消 / 删除」；实测点「取消」关闭，**未执行删除**，3 张图仍在（未改动用户数据）
+- 控制台 0 消息（0 警告 0 错误）
+- 侧栏「AI」项在 `/attachments` 下高亮
 
 ---
 
@@ -485,3 +519,4 @@ B1 第二轮修复（用户截图反馈后）：
 | 2026-10-26 | B6 | AI 截图记账 13 项（详见上表）。**2 个隐性缺陷**：① `AiApi.scan/text/chat/confirm` 解包错误（后端返回 `{ok,data}`，前端却取 `.data`）→ **AI 页与 A1 的 AiPanel 浮窗识别结果全废**，已统一改为 `.data.data`；② `doConfirm` 硬传空 `image_ids` → 截图挂不到交易上，已回传 `r.images[].id`。**结构变更**：去掉 4 个 tab，改回老版**左右两栏**（左=上传+草稿+文字快速记账，右=识别原理+识别历史画廊）。补可编辑草稿卡、三态配置提示、拖拽/粘贴/8MB/6 张校验、识别历史画廊、识别原理卡、保存后跳明细、只读门控；`TxnFormView` 补 AI 跳转 URL 预填。**后端**：`/ai/config` 剥离 apiKey（安全）、`/ai/attachments` 补 `category_name`/`category_icon`/`url` 并过滤软删除交易。`npm run build` 0 错误，`node --check` + 真实库自检通过。**待确认** |
 | 2026-10-26 | B6-2 | 用户在控制台看到 **2 条 Vue 警告** → 定位为 `SettingsView.vue` 漏 import `NGrid` / `NGridItem`（「系统信息」tab 栅格失效，已修）+ `NTag as NTagRaw` 死代码（已移除）。顺带全站 30 路由控制台巡检：**`/search` 页白屏** —— `NDatePicker` 直接绑 `''` 字符串（naive 只收毫秒时间戳）→ `RangeError: Invalid time value` 致 setup 抛错、组件不渲染，属 C2 范围未动，已记入遗留。修复后除 `/search` 外全站控制台 0 警告。`npm run build` 0 错误。**待确认** |
 | 2026-10-26 | B6-3 | 用户决策：`/search` 白屏**留到 C2 阶段与搜索筛选页一并修复**，本轮不动代码；根因与修法已回写进 C 组表格 C2 行的备注列，避免 C2 阶段重新排查。**待确认** |
+| 2026-10-26 | B7 | 截图库 11 项（详见上表）。新版原**完全没有此页**（`/attachments` 走 catch-all → 404），已新建 `AttachmentsView.vue` + 补路由 + 侧栏「AI」高亮映射（对齐老版 `activeNav: 'ai'`）。含：老版同款卡头计数文案 + 双「＋ 上传新截图」入口、🖼️ 空态 + 「去体验 AI 截图记账」、36 条/页分页（复用明细页固定 5 页滑动窗口）、图注三行（金额/商家/日期·KB）、`NImage` 点击放大（正向增强）、`NPopconfirm` 删除确认 + 只读门控、页码与 URL `?page=` 双向同步、删完末页自动回退。**后端**：`/ai/attachments` 补 `t.id AS linked_txn_id`（JOIN 加 `deleted_at IS NULL`）→ 关联交易软删时不再给出死链「查看记录」。**遗留**：`data/uploads` 磁盘文件已被清空（既有数据状态，非代码缺陷），页面图片 404，重新上传即可恢复。`npm run build` 0 错误，`node --check` + 真实库自检 + 浏览器实测通过。**待确认** |

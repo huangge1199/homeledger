@@ -113,6 +113,8 @@ const menuOptions = computed<MenuOption[]>(() =>
 const activeKey = computed(() => {
   const p = route.path
   if (p === '/') return '/'
+  // 截图库是 AI 记账的子页，高亮归属「AI 截图记账」（老版 activeNav: 'ai'）
+  if (p === '/attachments') return '/ai'
   // 取最长前缀匹配
   const candidates = menuOptions.value.flatMap((g) => g.type === 'group' ? (g.children || []).map((c) => c.key as string) : [])
   return candidates.filter((k) => k !== '/' && p.startsWith(k)).sort((a, b) => b.length - a.length)[0] || p
@@ -392,7 +394,7 @@ watch(() => route.path, () => { drawerOpen.value = false })
       <RouterLink to="/reports" :class="{ active: route.path.startsWith('/reports') }">
         <span class="mi">📊</span>报表
       </RouterLink>
-      <RouterLink to="/ai" :class="{ active: route.path === '/ai' }">
+      <RouterLink to="/ai" :class="{ active: route.path === '/ai' || route.path === '/attachments' }">
         <span class="mi">🤖</span>AI
       </RouterLink>
     </nav>
