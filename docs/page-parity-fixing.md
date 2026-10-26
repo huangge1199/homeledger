@@ -380,7 +380,7 @@ B1 第二轮修复（用户截图反馈后）：
 
 **已知遗留 1**：`/attachments` 独立页在新版无路由（`router/index.ts` 走 catch-all → `NotFoundView`），AI 页「识别历史」的「全部 →」当前会落到 404，需在 B7「截图库」补齐。
 
-**已知遗留 2（本次巡检发现，属 C2 范围，未修）**：`/search` 页 `SearchView.vue` 白屏 —— `NDatePicker` 的 `v-model:value` 直接绑 `f.from` / `f.to`（初值 `''` 字符串），而 naive 的 `NDatePicker` 只接受毫秒时间戳（Number）→ 传 `''` 触发 `RangeError: Invalid time value`，setup 抛错导致整个组件不渲染（控制台 8 条警告/错误）。该页原状态就是「待修」，本次未动，留待 C2 一并处理。
+**已知遗留 2（本次巡检发现，属 C2 范围）**：`/search` 页 `SearchView.vue` 白屏 —— `NDatePicker` 的 `v-model:value` 直接绑 `f.from` / `f.to`（初值 `''` 字符串），而 naive 的 `NDatePicker` 只接受毫秒时间戳（Number）→ 传 `''` 触发 `RangeError: Invalid time value`，setup 抛错导致整个组件不渲染（控制台 8 条警告/错误）。该页原状态就是「待修」，本次未动。**用户已确认：留到 C2 阶段与搜索筛选页一并修复**（根因与修法已同步记入下方 C 组表格的备注列）。
 
 **验证**：`npm run build`（`vue-tsc --noEmit && vite build`）0 错误、exit 0；`GetDiagnostics` 无诊断；`node --check src/routes/api.v1.ai.js` 通过；真实库自检 ledger 2 有 3 条附件，`amount_cents=400`、`merchant='邻家惠超市 超市购物'`、`category_name='饮料'`、`category_icon='🧋'`、`url='/uploads/202610/1792558843589_9iotdqpz.png'` 均正确，ledger 3 无附件。
 
@@ -396,7 +396,7 @@ B1 第二轮修复（用户截图反馈后）：
 | # | 页面 | 旧文件 | 新文件 | 状态 | 差异备注 |
 |---|---|---|---|---|---|
 | C1 | 报表分析 | `reports.ejs` | `ReportsView.vue` | 待修 | 老版单页多区块；新版 5 tab，需核区间/维度对齐 |
-| C2 | 搜索筛选 | `search.ejs` | `SearchView.vue` | 待修 | |
+| C2 | 搜索筛选 | `search.ejs` | `SearchView.vue` | 待修 | **当前白屏**：`NDatePicker` 的 `v-model:value` 直接绑 `f.from`/`f.to`（初值 `''` 字符串），naive 只收毫秒时间戳 → `RangeError: Invalid time value`，setup 抛错致组件不渲染。修法：改用 `DatePickerWrap` 组件或内部把字符串↔时间戳互转 |
 
 ---
 
@@ -484,3 +484,4 @@ B1 第二轮修复（用户截图反馈后）：
 | 2026-10-21 | B5-2 | 用户提供老版截图对照，改版式 8 项：整体改**左右两栏**（老版 `.grid-main` 1.6fr/1fr，左=日历+热力图、右=当日详情+支出TOP）、删 4 个 StatCard 把月汇总「支出/收入/结余」移进月导航条右侧、月导航改「‹ 标题 › + 本月」形态、补日历卡标题与提示脚注、空态改老版 📭 图标样式、栅格间距/表头字号对齐、清理 5 个失效导入、`.day-detail` 补 sticky 吸附。`npm run build` 0 错误，无诊断。**已确认** |
 | 2026-10-26 | B6 | AI 截图记账 13 项（详见上表）。**2 个隐性缺陷**：① `AiApi.scan/text/chat/confirm` 解包错误（后端返回 `{ok,data}`，前端却取 `.data`）→ **AI 页与 A1 的 AiPanel 浮窗识别结果全废**，已统一改为 `.data.data`；② `doConfirm` 硬传空 `image_ids` → 截图挂不到交易上，已回传 `r.images[].id`。**结构变更**：去掉 4 个 tab，改回老版**左右两栏**（左=上传+草稿+文字快速记账，右=识别原理+识别历史画廊）。补可编辑草稿卡、三态配置提示、拖拽/粘贴/8MB/6 张校验、识别历史画廊、识别原理卡、保存后跳明细、只读门控；`TxnFormView` 补 AI 跳转 URL 预填。**后端**：`/ai/config` 剥离 apiKey（安全）、`/ai/attachments` 补 `category_name`/`category_icon`/`url` 并过滤软删除交易。`npm run build` 0 错误，`node --check` + 真实库自检通过。**待确认** |
 | 2026-10-26 | B6-2 | 用户在控制台看到 **2 条 Vue 警告** → 定位为 `SettingsView.vue` 漏 import `NGrid` / `NGridItem`（「系统信息」tab 栅格失效，已修）+ `NTag as NTagRaw` 死代码（已移除）。顺带全站 30 路由控制台巡检：**`/search` 页白屏** —— `NDatePicker` 直接绑 `''` 字符串（naive 只收毫秒时间戳）→ `RangeError: Invalid time value` 致 setup 抛错、组件不渲染，属 C2 范围未动，已记入遗留。修复后除 `/search` 外全站控制台 0 警告。`npm run build` 0 错误。**待确认** |
+| 2026-10-26 | B6-3 | 用户决策：`/search` 白屏**留到 C2 阶段与搜索筛选页一并修复**，本轮不动代码；根因与修法已回写进 C 组表格 C2 行的备注列，避免 C2 阶段重新排查。**待确认** |
