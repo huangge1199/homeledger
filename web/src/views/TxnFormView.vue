@@ -198,12 +198,28 @@ async function load() {
         amount: s.share_cents ? (Number(s.share_cents) / 100).toFixed(2) : '',
       }))
     } else {
-      // 新建模式：支持 URL 预填（老版 /transactions/new?date=... 的补记行为）
-      // 目前仅 date，其余字段保持默认
-      const qDate = String(route.query.date || '')
+      // 新建模式：URL 预填（老版 /transactions/new?type=&amount=&date=&category_id=&account_id=&note=）
+      // AI 文字快速记账单笔会带这些参数跳过来
+      const q = route.query
+      const qType = String(q.type || '')
+      if (TXN_TYPE_MAP[qType]) type.value = qType
+      const qAmount = Number(String(q.amount ?? '').replace(/[,\s¥￥$]/g, ''))
+      if (Number.isFinite(qAmount) && qAmount > 0) amount.value = qAmount.toFixed(2)
+      const qDate = String(q.date || '')
       if (/^\d{4}-\d{2}-\d{2}$/.test(qDate)) date.value = qDate
       // 默认账户：取第一个
       if (accounts.value.length) accountId.value = Number(accounts.value[0].id)
+      // 分类：必须存在且与当前类型 kind 一致才采用
+      const qCatId = Number(q.category_id)
+      if (qCatId) {
+        const cat = categories.value.find((c) => c.id === qCatId)
+        if (cat && cat.kind === kindOf(type.value)) categoryId.value = cat.id
+      }
+      // 账户：必须存在才采用
+      const qAccId = Number(q.account_id)
+      if (qAccId && accounts.value.some((a) => a.id === qAccId)) accountId.value = qAccId
+      const qNote = String(q.note || '')
+      if (qNote) note.value = qNote
     }
   } catch (e) {
     toastError(errorMessage(e, '加载表单失败'))

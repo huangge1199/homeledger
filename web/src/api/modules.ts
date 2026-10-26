@@ -146,19 +146,20 @@ export const ReportsApi = {
 }
 
 // --- AI ---
+// 注：后端统一响应体为 { ok, data }，业务数据在 data 里 —— 读接口一律取 r.data.data
 export const AiApi = {
   config: () => api.get('/ai/config').then((r) => r.data.data),
   scan: (payload: { text?: string; images?: Array<{ name?: string; dataUrl: string }> }) =>
-    api.post('/ai/scan', payload, { headers: { 'Content-Type': 'application/json' } }).then((r) => r.data),
+    api.post('/ai/scan', payload, { headers: { 'Content-Type': 'application/json' } }).then((r) => r.data.data),
   text: (text: string) =>
-    api.post('/ai/text', { text }, { headers: { 'Content-Type': 'application/json' } }).then((r) => r.data),
+    api.post('/ai/text', { text }, { headers: { 'Content-Type': 'application/json' } }).then((r) => r.data.data),
   chat: (payload: { text?: string; images?: Array<{ name?: string; dataUrl: string }> }) =>
-    api.post('/ai/chat', payload, { headers: { 'Content-Type': 'application/json' } }).then((r) => r.data),
+    api.post('/ai/chat', payload, { headers: { 'Content-Type': 'application/json' } }).then((r) => r.data.data),
   confirm: (items: unknown[], image_ids: number[] = [], source = 'ai_screenshot') =>
-    api.post('/ai/confirm', { items, image_ids, source }, { headers: { 'Content-Type': 'application/json' } }).then((r) => r.data),
+    api.post('/ai/confirm', { items, image_ids, source }, { headers: { 'Content-Type': 'application/json' } }).then((r) => r.data.data),
   attachments: (page = 1) =>
     api.get('/ai/attachments', { params: { page } }).then((r) => r.data.data),
-  removeAttachment: (id: number) => api.delete(`/ai/attachments/${id}`).then((r) => r.data),
+  removeAttachment: (id: number) => api.delete(`/ai/attachments/${id}`).then((r) => r.data.data),
 }
 
 // --- Admin: settings, ledgers, members, import, backup ---

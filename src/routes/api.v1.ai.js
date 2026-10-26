@@ -11,7 +11,19 @@ const fd = require('../lib/formdata');
 const att = require('../lib/attachments');
 
 router.get('/config', auth.requireLogin, api.asyncHandler((req, res) => {
-  api.ok(res, { config: ai.getAiConfig(), ready: ai.isAiReady(), usable: ai.isAiUsable() });
+  // 只回传页面需要的字段：apiKey 属敏感信息，不下发到浏览器
+  const c = ai.getAiConfig();
+  api.ok(res, {
+    config: {
+      enabled: c.enabled,
+      baseUrl: c.baseUrl,
+      model: c.model,
+      vision: c.vision,
+      autoSave: c.autoSave,
+    },
+    ready: ai.isAiReady(),
+    usable: ai.isAiUsable(),
+  });
 }));
 
 router.post('/scan', auth.requireLogin, auth.requireLedgerWrite, api.asyncHandler(async (req, res) => {
@@ -154,10 +166,15 @@ router.get('/attachments', auth.requireLogin, api.asyncHandler((req, res) => {
   const pageSize = 36;
   const total = Number(get('SELECT COUNT(*) AS c FROM attachments WHERE ledger_id = ?', ledgerId)?.c || 0);
   const rows = all(
-    `SELECT a.*, t.amount_cents, t.txn_date, t.merchant FROM attachments a
-     LEFT JOIN transactions t ON t.id = a.txn_id
+    `SELECT a.*, t.amount_cents, t.txn_date, t.merchant,
+            c.name AS category_name, c.icon AS category_icon
+     FROM attachments a
+     LEFT JOIN transactions t ON t.id = a.txn_id AND t.deleted_at IS NULL
+     LEFT JOIN categories c ON c.id = t.category_id
      WHERE a.ledger_id = ? ORDER BY a.id DESC LIMIT ? OFFSET ?`,
     ledgerId, pageSize, (page - 1) * pageSize);
+  // 补静态访问地址，前端可直接 <img src>
+  for (const r of rows) r.url = att.webUrl(r.rel_path);
   api.ok(res, { items: rows, page, total, pageSize, totalPages: Math.max(1, Math.ceil(total / pageSize)) });
 }));
 

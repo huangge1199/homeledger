@@ -86,7 +86,7 @@ A1 已修复内容：
 | B3 | 账单明细 | `transactions.ejs` | `TransactionsView.vue` | 已确认 | 见下方修复清单（第一轮 15 项 + 第二轮 19 项 + 第三轮 5 项 + 第四轮 4 项） |
 | B4 | 记录详情 | — | `TxnDetailView.vue` | 已确认 | 新增页（老版是弹窗，非独立页），详见下方修复清单 |
 | B5 | 记账日历 | `calendar.ejs` | `CalendarView.vue` | 已确认 | 见下方修复清单（第一轮 9 项 + 第二轮 8 项） |
-| B6 | AI 截图记账 | `ai.ejs` | `AiView.vue` | 待修 | |
+| B6 | AI 截图记账 | `ai.ejs` | `AiView.vue` | 待确认 | 见下方修复清单（15 项，含 2 个隐性缺陷 + 2 条控制台警告修复）；「全部 →」指向的 `/attachments` 独立页待 B7 补齐 |
 | B7 | 截图库 | `attachments.ejs` | 缺独立页 | 待修 | 老版有 `/attachments` 图库页 + 分页；新版无路由 |
 
 B1 第一轮修复（后端 `/api/v1/dashboard` 数据本来就全，缺的是前端消费）：
@@ -352,6 +352,45 @@ B1 第二轮修复（用户截图反馈后）：
 
 ---
 
+#### B6 AI 截图记账修复（2026-10-26）
+
+以老版 `ai.ejs` + `public/js/app.js` 的 `initAiPage()`（367-569 行）为行为基准。新版原实现是 4 个 tab（截图识别 / 文字记账 / 智能对话 / 附件）+ 只读 `NDataTable` 结果，缺老版绝大多数能力。
+
+**布局决策**：去掉 4 个 tab，改回老版**左右两栏** `.grid-main`（`minmax(0,1.6fr) minmax(0,1fr)`，≤1100px 塌成单栏）。老版右栏「识别原理 + 识别历史」天然对应两栏；「智能对话」能力已由 A1 的全站 `AiPanel` 浮窗承担；「附件」由右栏识别历史 + B7 的 `/attachments` 独立页承担。
+
+| # | 问题 | 改法 | 影响文件 |
+|---|---|---|---|
+| 1 | **AI 识别结果全废（隐性缺陷，编译不报错）** | 后端统一响应体为 `{ok:true, data:{...}}`，而 `AiApi.scan/text/chat/confirm` 写成 `.then(r => r.data)` → 拿到整个响应体 → 前端读 `r.engine`/`r.items`/`r.created` 全是 `undefined`，**AI 页与 A1 的 AiPanel 浮窗都无法识别**。统一改为 `.then(r => r.data.data)`（与同文件其他读接口一致） | `api/modules.ts` |
+| 2 | **截图与账单不关联** | `doConfirm` 原硬传 `AiApi.confirm(items, [], 'ai_screenshot')` → 空数组，截图永远挂不到交易上。新增 `lastImageIds`，scan 时保存 `r.images[].id`，confirm 时回传 | `AiView.vue` |
+| 3 | **`/ai/config` 明文下发 apiKey** | 老版 EJS 只输出 model/baseUrl/vision/autoSave。后端改为白名单字段，不下发 apiKey（管理员设置页 `GET /api/v1/admin/settings` 仍返回完整配置，未动） | `api.v1.ai.js` |
+| 4 | **`/ai/attachments` 缺图注字段** | SQL 补 `c.name AS category_name` / `c.icon AS category_icon`，并为每行补 `url = att.webUrl(r.rel_path)`，前端可直接 `<img src>` | `api.v1.ai.js` |
+| 5 | **附件列表混入已删交易** | JOIN transactions 未过滤软删除，导致已删交易的金额/分类仍在图注显示。补 `AND t.deleted_at IS NULL` | `api.v1.ai.js` |
+| 6 | 页面结构与老版不符 | 去掉 4 tab，改两栏 grid-main：左 = 上传卡 + 识别结果草稿区 + 文字快速记账卡；右 = 识别原理卡 + 识别历史画廊卡 | `AiView.vue` |
+| 7 | 缺三态配置提示 | 顶部按状态分别提示：`!aiReady` → 「尚未配置 AI 模型…」；`!aiUsable` → 「已填写模型 X，但 AI 识别处于关闭状态…」；正常 → 「已连接模型 X（baseUrl）· 视觉能力… · 自动保存…」 | `AiView.vue` |
+| 8 | 缺可编辑草稿卡 | 补老版 `renderDrafts` 同款：类型 chip / 分类 chip / 置信度「把握 XX%」（high/mid/low 三色）/ 删除按钮；字段含金额(NInputNumber ¥)、日期(DatePickerWrap)、类型(NSelect 支出/收入/转账)、分类(NSelect 按 kind 联动)、账户(AccountSelect)、商家备注(NInput)；提交时过滤 `amount_cents > 0` | `AiView.vue` |
+| 9 | 缺上传交互与校验 | 自绘 `.dropzone`：点击选择 / 拖拽 / **Ctrl+V 粘贴**（document 级监听，`onBeforeUnmount` 移除）；校验单张 8MB 上限、仅图片、最多 6 张（对齐后端 `MAX_IMAGES`） | `AiView.vue` |
+| 10 | 缺识别历史画廊 | 补 `.gallery` 网格（`minmax(132px,1fr)`，≤820px 变 2 列），`NImage` 可放大，figcaption 显示金额或「商家 · 分类 · 日期」，右下角「全部 →」跳 `/attachments`（该路由待 B7 补齐，当前落 404） | `AiView.vue` |
+| 11 | 缺识别原理卡 | 按老版补「识别原理」说明卡（视觉模型读图 / 规则引擎兜底 / 置信度含义） | `AiView.vue` |
+| 12 | **文字快速记账单笔跳转丢预填** | 老版单笔跳 `/transactions/new?from_ai=1` 并预填类型/金额/日期/分类/账户/备注。新版 `TxnFormView` 仅支持 `?date=` → 跳转后全是默认值。补 URL 预填（`type`/`amount`/`date`/`category_id`/`account_id`/`note`），分类需存在且与当前类型 kind 一致才采用，账户需存在才采用 | `TxnFormView.vue` |
+| 13 | 保存后行为 / 只读门控缺失 | 保存成功跳 `/transactions`（老版行为），失败时显示后端返回的 errors；`!session.canWrite` 时顶部红色提示并禁用识别/保存/解析按钮 | `AiView.vue` |
+| 14 | **设置页控制台报 2 条 Vue 警告：`Failed to resolve component: NGridItem` / `NGrid`** | `SettingsView.vue` 模板用了 `<NGrid>` / `<NGridItem>`（「系统信息」tab 的栅格），但 `import { ... } from 'naive-ui'` 里**漏了这两个组件** → Vue 解析不到，渲染成未知自定义元素 → **该 tab 的栅格布局完全失效**（所有 `.info` 项挤成一行竖排）。补 `NGrid, NGridItem` 到 import 列表 | `SettingsView.vue` |
+| 15 | `NTag as NTagRaw` 重复导入且未使用 | 同一文件已单独 import `NTag`，`NTagRaw` 别名导入后全文件无引用，属死代码，移除 | `SettingsView.vue` |
+
+**有意偏离老版一处**：草稿类型切到「转账」时隐藏并清空 `category_id`（老版转账仍会带分类），与后端 `createTransaction` 的转账校验（必须 account_id + to_account_id 且不同）方向一致。
+
+**已知遗留 1**：`/attachments` 独立页在新版无路由（`router/index.ts` 走 catch-all → `NotFoundView`），AI 页「识别历史」的「全部 →」当前会落到 404，需在 B7「截图库」补齐。
+
+**已知遗留 2（本次巡检发现，属 C2 范围，未修）**：`/search` 页 `SearchView.vue` 白屏 —— `NDatePicker` 的 `v-model:value` 直接绑 `f.from` / `f.to`（初值 `''` 字符串），而 naive 的 `NDatePicker` 只接受毫秒时间戳（Number）→ 传 `''` 触发 `RangeError: Invalid time value`，setup 抛错导致整个组件不渲染（控制台 8 条警告/错误）。该页原状态就是「待修」，本次未动，留待 C2 一并处理。
+
+**验证**：`npm run build`（`vue-tsc --noEmit && vite build`）0 错误、exit 0；`GetDiagnostics` 无诊断；`node --check src/routes/api.v1.ai.js` 通过；真实库自检 ledger 2 有 3 条附件，`amount_cents=400`、`merchant='邻家惠超市 超市购物'`、`category_name='饮料'`、`category_icon='🧋'`、`url='/uploads/202610/1792558843589_9iotdqpz.png'` 均正确，ledger 3 无附件。
+
+**浏览器实测**（Vite dev + 后端 5111 已运行，Chrome 实测）：
+- 全站 30 个路由逐个巡检控制台，修复后仅剩 `/search` 一处白屏（上述遗留 2），其余页面控制台 0 警告 0 错误
+- AI 页：两栏布局正常，识别历史画廊渲染 3 张图（金额 4.00 / 647.88 / 647.88，与库内一致），三态提示显示「已连接模型 MiniMax-M3.1-Flash-Preview…视觉能力已开启」
+- 设置页「系统信息」tab：`NGrid` 渲染正常（`.n-grid` 存在，子项带 `grid-column: span 1 / span 1`），控制台 0 警告
+
+---
+
 ### C 组｜分析
 
 | # | 页面 | 旧文件 | 新文件 | 状态 | 差异备注 |
@@ -443,3 +482,5 @@ B1 第二轮修复（用户截图反馈后）：
 | 2026-10-21 | B3-4 | 用户验收反馈 4 项：明细行补消费时刻（`txn_time`，前端 `itemTime()` 早有但从未在模板使用）、编辑/删除按钮挪到金额左侧（`.act` 补 `margin-left:auto`）、`AccountDetailView` 的 `toItem` 补 `txn_time`/`tag_names`/`reimbursed_at`、后端 `GET /api/v1/accounts/:id` 补 `att.attachCounts(rows)` 恢复 📎 徽标。`npm run build` 0 错误，后端 `node --check` + 数据自检通过。**已确认** |
 | 2026-10-21 | B5 | 记账日历 9 项（详见上表）：补「本月热力分布」SVG 热力图与「本月支出 TOP 5」排行条（老版有、新版缺）、修日历格金额强制取整（`toFixed(0)` → 新增 `fmtPlain`）、补选中日当日小计与「＋ 补记」入口、标题改相对日期+星期、`TxnFormView` 补 `?date=` 预填（老版补记行为）、修星期表头非响应式真 bug、清理 9 处死代码与 1 次多余请求、视觉对齐老版 `.cal-cell`/`.cal-nav`（圆角/热力口径/空白格/hover/月标题/按钮文案）。后端 `/dashboard/calendar` 数据齐备，**无需改后端**。`npm run build` 0 错误，无诊断。**待确认** |
 | 2026-10-21 | B5-2 | 用户提供老版截图对照，改版式 8 项：整体改**左右两栏**（老版 `.grid-main` 1.6fr/1fr，左=日历+热力图、右=当日详情+支出TOP）、删 4 个 StatCard 把月汇总「支出/收入/结余」移进月导航条右侧、月导航改「‹ 标题 › + 本月」形态、补日历卡标题与提示脚注、空态改老版 📭 图标样式、栅格间距/表头字号对齐、清理 5 个失效导入、`.day-detail` 补 sticky 吸附。`npm run build` 0 错误，无诊断。**已确认** |
+| 2026-10-26 | B6 | AI 截图记账 13 项（详见上表）。**2 个隐性缺陷**：① `AiApi.scan/text/chat/confirm` 解包错误（后端返回 `{ok,data}`，前端却取 `.data`）→ **AI 页与 A1 的 AiPanel 浮窗识别结果全废**，已统一改为 `.data.data`；② `doConfirm` 硬传空 `image_ids` → 截图挂不到交易上，已回传 `r.images[].id`。**结构变更**：去掉 4 个 tab，改回老版**左右两栏**（左=上传+草稿+文字快速记账，右=识别原理+识别历史画廊）。补可编辑草稿卡、三态配置提示、拖拽/粘贴/8MB/6 张校验、识别历史画廊、识别原理卡、保存后跳明细、只读门控；`TxnFormView` 补 AI 跳转 URL 预填。**后端**：`/ai/config` 剥离 apiKey（安全）、`/ai/attachments` 补 `category_name`/`category_icon`/`url` 并过滤软删除交易。`npm run build` 0 错误，`node --check` + 真实库自检通过。**待确认** |
+| 2026-10-26 | B6-2 | 用户在控制台看到 **2 条 Vue 警告** → 定位为 `SettingsView.vue` 漏 import `NGrid` / `NGridItem`（「系统信息」tab 栅格失效，已修）+ `NTag as NTagRaw` 死代码（已移除）。顺带全站 30 路由控制台巡检：**`/search` 页白屏** —— `NDatePicker` 直接绑 `''` 字符串（naive 只收毫秒时间戳）→ `RangeError: Invalid time value` 致 setup 抛错、组件不渲染，属 C2 范围未动，已记入遗留。修复后除 `/search` 外全站控制台 0 警告。`npm run build` 0 错误。**待确认** |
