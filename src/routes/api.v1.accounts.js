@@ -36,8 +36,15 @@ accounts.get('/', auth.requireLogin, api.asyncHandler((req, res) => {
   }));
   const groups = {};
   for (const a of list) (groups[a.type] = groups[a.type] || []).push(a);
+  // 已停用账户同样补上类型信息与近 30 天流水，前端渲染归档区时口径与在用账户一致
+  const archivedList = archived.map((a) => ({
+    ...a,
+    flow: flowMap.get(Number(a.id)) || { out: 0, inflow: 0 },
+    typeLabel: ACCOUNT_TYPE_MAP[a.type]?.label || a.type,
+    isLiability: ['credit', 'loan', 'payable'].includes(a.type),
+  }));
   const budgetsByAccount = all("SELECT * FROM budgets WHERE ledger_id = ? AND scope = 'account' AND is_active = 1", ledgerId);
-  api.ok(res, { accounts: list, archived, groups, overview, budgetsByAccount });
+  api.ok(res, { accounts: list, archived: archivedList, groups, overview, budgetsByAccount });
 }));
 
 accounts.get('/:id(\\d+)', auth.requireLogin, api.asyncHandler((req, res) => {

@@ -438,13 +438,67 @@ B1 第二轮修复（用户截图反馈后）：
 
 | # | 页面 | 旧文件 | 新文件 | 状态 | 差异备注 |
 |---|---|---|---|---|---|
-| D1 | 账户管理 | `accounts.ejs` | `AccountsView.vue` | 待修 | |
+| D1 | 账户管理 | `accounts.ejs` | `AccountsView.vue` | 已确认 | 见下方修复清单（5 个隐性缺陷 + 14 项功能补齐 + 术语统一）；**已补齐「余额调整」「明细」两个行内操作、账户副行、每组合计、近 30 天流水** |
 | D2 | 账户详情 | `account-detail.ejs` | `AccountDetailView.vue` | 待修 | |
 | D3 | 预算管理 | `budgets.ejs` + `partials/budget-cat-options.ejs` | `BudgetsView.vue` | 待修 | |
 | D4 | 周期账单 | `recurring.ejs` | `RecurringView.vue` | 待修 | |
 | D5 | 订阅扣费 | `subscriptions.ejs` | `SubscriptionsView.vue` | 待修 | 老版 16.5KB，功能最重之一 |
 | D6 | 借贷台账 | `debts.ejs` | `DebtsView.vue` | 待修 | |
 | D7 | 储蓄目标 | `goals.ejs` | `GoalsView.vue` | 待修 | |
+
+#### D1 账户管理修复（2026-10-27）
+
+以老版 `src/views/accounts.ejs`（183 行）为行为基准，逐项比对后重写 `web/src/views/AccountsView.vue`，并补齐 `src/routes/api.v1.accounts.js` 的归档账户字段。
+
+**5 个隐性缺陷：**
+
+| # | 缺陷 | 现象 | 根因 | 修法 | 文件 |
+|---|---|---|---|---|---|
+| 1 | **近 30 天流水永不显示** | 账户行看不到收支 | 前端判断 `a.flow?.in` / `a.flow?.out`，但后端返回的字段是 `flow.out` 和 `flow.inflow`（**没有 `flow.in`**）→ 条件恒假 | 改用老版口径 `近30天 −{flow.out} / +{flow.inflow}`，并放到金额右侧（老版位置） | `AccountsView.vue` |
+| 2 | **总负债显示成负数** | 卡片显示 `¥-84,318.30` | 老版 `helpers.money(overview.liabilities)` 直接显示正数（负债本身是正值），新版多套了一层 `-Math.abs()` | 去掉取负，直接显示 `overview.liabilities` | `AccountsView.vue` |
+| 3 | **账户副行信息全丢** | 只有「↗收 / ↘支」，看不到币种/尾号/账单日/还款日 | 老版副行是 `币种 · 尾号 card_no · 账单日 N 号 · 还款日 N 号`，新版整行被 flow 占掉 | 新增 `accountMeta(a)` 生成副行；flow 移到金额下方右侧 | `AccountsView.vue` |
+| 4 | **分组顺序错乱** | 按字母序排（cash/credit/debit/investment/…） | 老版按 `ACCOUNT_TYPES` **数组定义顺序**遍历，新版用 `Object.keys().sort()` | 改为按 `ACCOUNT_TYPES` 顺序过滤输出（现金 → 储蓄卡 → 信用卡 → 虚拟账户 → …） | `AccountsView.vue` |
+| 5 | **后端归档账户字段缺失** | 已停用账户卡渲染不出类型/流水/负债标记 | `GET /accounts` 的 `archived` 直接返回 DB 原始行，未像 `accounts` 一样补 `flow`/`typeLabel`/`isLiability` | 后端补齐同样 3 个字段 | `api.v1.accounts.js` |
+
+**14 项功能补齐：**
+
+| # | 老版能力 | 新版现状 | 修法 |
+|---|---|---|---|
+| 1 | 统计卡副标题（净资产「资产 − 负债」、总资产「现金、储蓄、虚拟、投资等」、总负债「信用卡、贷款、应付款」） | 全部缺失 | `StatCard` 的 `hint` 属性补 3 条文案 |
+| 2 | 净资产为负时标红 | 固定 `tone="neutral"` | 改为 `:tone="overview.net >= 0 ? 'neutral' : 'expense'"` |
+| 3 | 「共 N 个在用账户，M 个已停用」+「＋ 添加账户」 | 缺失 | 统计卡下方新增一行计数 + 添加按钮 |
+| 4 | 每组卡头显示**该组合计金额** | 只有「N 个」 | 卡头右侧补「合计 ¥X」（按 `balance_cents` 求和） |
+| 5 | 行内操作 **「明细」** | 缺失 | 补「明细」按钮跳 `/accounts/:id` |
+| 6 | 行内操作 **「余额调整」** | 缺失（只在账户详情页有） | 列表页补「余额调整」抽屉：实际余额 / 日期（默认今天）/ 说明 + 提示「差额会记为一笔「余额调整」，不影响收支统计」 |
+| 7 | 账户行右侧「近30天 −out / +inflow」 | 缺失（错放在左侧 meta 行） | 移到金额下方右侧 |
+| 8 | 账户行布局：名称与副行在上、金额与流水在右、操作按钮**常显**在下 | 全部挤在一行；操作按钮 `display:none` 要 hover 才出现（移动端根本点不到） | 改为上下两行结构（`.top` + `.actions`），操作按钮常显 |
+| 9 | 余额颜色：负数**或负债类账户**都标红 | 只判 `balance_cents < 0` | 新增 `amountTone(a)`：`isLiability`（credit/loan/payable）也标 expense |
+| 10 | 币种 7 种（CNY/USD/EUR/HKD/JPY/**GBP/SGD**），新建时默认取站点本位币 | 只有 5 种（缺 GBP/SGD），硬编码 CNY | 补齐 7 种；默认值改 `session.baseCurrency` |
+| 11 | 编辑/新建表单**无条件**显示额度 / 账单日 / 还款日 | 被 `v-if="type === 'credit'"` 包住 → 储蓄卡等无法设置账期 | 去掉条件，改为独立的「额度与账期」分区（老版新建表单就是无条件显示的） |
+| 12 | 空态：💳「还没有账户」+「添加现金、银行卡、支付宝、微信钱包等账户后即可开始记账」 | 🏦「创建账户后即可开始记录每笔钱的流向」 | 换回老版图标与文案 |
+| 13 | 已停用账户卡：标题「已停用账户」+ 右侧「历史记录仍完整保留」 | 标题「已归档」，无副标题 | 换回老版文案 + 补副标题 |
+| 14 | 删除确认文案「确定删除账户「X」？」 | 「确定删除「X」？仅当账户下没有交易时才能删除。」 | 换回老版文案（限制说明由后端 `CONFLICT` 错误提示承担） |
+
+**术语统一（老版用「停用」，新版混用「归档」）**：账户页统一为老版口径 —— 按钮「停用」、卡头「已停用账户」、标签「已停用」、提示「已停用（历史记录保留）」、删除失败后的二次确认「是否改为停用？」。
+
+**有意偏离老版一处**：老版的「编辑」与「余额调整」是**行内展开表单**（点按钮在账户行下方展开），新版沿用项目统一的**抽屉**交互（编辑抽屉、余额调整抽屉），功能字段与老版一一对应。
+
+**验证**：`npm run build`（`vue-tsc --noEmit && vite build`）0 错误、exit 0，产物含 `AccountsView-*.js`；`GetDiagnostics` 无诊断；`node --check src/routes/api.v1.accounts.js` 通过。
+
+**浏览器实测**（Chrome 实测，含数据往返验证）：
+- 统计卡：净资产 ¥26,499.12「资产 − 负债」/ 总资产 ¥110,817.42「现金、储蓄、虚拟、投资等」/ **总负债 ¥84,318.30（正数）**「信用卡、贷款、应付款」
+- 「共 5 个在用账户」+「＋ 添加账户」正常显示
+- 分组顺序：现金 → 储蓄卡 → 信用卡 → 虚拟账户（**老版 ACCOUNT_TYPES 顺序**，非字母序）；每组卡头「N 个」+「合计 ¥X」（虚拟账户组合计 -¥84,318.30）
+- 账户行：图标 + 「💵 现金」+ 副行「CNY」；右侧金额 + 「近30天 −5,561.02 / +294.76」（**修复缺陷 1 后收支数值正常显示**）
+- 行内 5 个操作按钮全部常显：明细 / 编辑 / 余额调整 / 停用 / 删除
+- 删除确认框文案：「确定删除账户「微信钱包」？」（老版口径）
+- 已停用账户卡：「已停用账户」+「历史记录仍完整保留」+「💵 D1-币种测试 / GBP · 账单日 5 号 · 还款日 25 号 / ¥20.00 / 恢复」
+- **数据往返实测**：创建外币账户（GBP / 12.34）→ 编辑保存额度 500、账单日 5、还款日 25、发卡行、备注（**非信用卡类型也能存账期**，`GET /accounts/16` 回读全部正确）→ 余额调整 12.34→20.00（生成交易 id 4047，备注「余额调整：12.34 → 20.00 · D1自测」，与老版一致）→ 停用 → 删除被正确拦截（`该账户下有 1 笔记录，无法删除。可改为「停用」。`）→ **测试数据已全部清理**（删交易 + 删账户，刷新后恢复为 5 个在用账户、统计卡数值不变）
+- 控制台：0 应用级报错（仅页面刷新导致的 `net::ERR_ABORTED`）
+
+**遗留**：`AccountDetailView.vue`（D2）的余额调整提示语解包层级错（`r.delta` 应为 `r.data.delta`，后端 `api.created` 的 `delta` 在 `data` 里）→ 显示为「已调整（NaN 元）」，**留待 D2 一并修复**。
+
+**用户验收**：已确认。
 
 ---
 
@@ -466,7 +520,7 @@ B1 第二轮修复（用户截图反馈后）：
 | F1 | 账本管理 | `ledgers.ejs` | `LedgersView.vue` | 待修 | |
 | F2 | 成员权限 | `members.ejs` | `MembersView.vue` | 待修 | |
 | F3 | 通知中心 | `notifications.ejs` | `NotificationsView.vue` | 待修 | 需同步 `session.setUnread()` |
-| F4 | 设置 | `settings.ejs`（25KB，最大） | `SettingsView.vue` | 待确认 | 见下方修复清单（回归老版 6 个 tab + 4 个隐性缺陷 + 3 个运行时缺陷）；**修复后即可在设置页配好 AI，B6/B7 的完整验证前提已具备** |
+| F4 | 设置 | `settings.ejs`（25KB，最大） | `SettingsView.vue` | 已确认 | 见下方修复清单（回归老版 6 个 tab + 4 个隐性缺陷 + 3 个运行时缺陷）；**修复后即可在设置页配好 AI，B6/B7 的完整验证前提已具备** |
 | F5 | 关于 | `about.ejs` | `AboutView.vue` | 待修 | |
 
 #### F4 设置修复（2026-10-27）
@@ -587,4 +641,5 @@ B1 第二轮修复（用户截图反馈后）：
 | 2026-10-26 | B6-2 | 用户在控制台看到 **2 条 Vue 警告** → 定位为 `SettingsView.vue` 漏 import `NGrid` / `NGridItem`（「系统信息」tab 栅格失效，已修）+ `NTag as NTagRaw` 死代码（已移除）。顺带全站 30 路由控制台巡检：**`/search` 页白屏** —— `NDatePicker` 直接绑 `''` 字符串（naive 只收毫秒时间戳）→ `RangeError: Invalid time value` 致 setup 抛错、组件不渲染，属 C2 范围未动，已记入遗留。修复后除 `/search` 外全站控制台 0 警告。`npm run build` 0 错误。**待确认** |
 | 2026-10-26 | B6-3 | 用户决策：`/search` 白屏**留到 C2 阶段与搜索筛选页一并修复**，本轮不动代码；根因与修法已回写进 C 组表格 C2 行的备注列，避免 C2 阶段重新排查。**待确认** |
 | 2026-10-26 | B7 | 截图库 11 项（详见上表）。新版原**完全没有此页**（`/attachments` 走 catch-all → 404），已新建 `AttachmentsView.vue` + 补路由 + 侧栏「AI」高亮映射（对齐老版 `activeNav: 'ai'`）。含：老版同款卡头计数文案 + 双「＋ 上传新截图」入口、🖼️ 空态 + 「去体验 AI 截图记账」、36 条/页分页（复用明细页固定 5 页滑动窗口）、图注三行（金额/商家/日期·KB）、`NImage` 点击放大（正向增强）、`NPopconfirm` 删除确认 + 只读门控、页码与 URL `?page=` 双向同步、删完末页自动回退。**后端**：`/ai/attachments` 补 `t.id AS linked_txn_id`（JOIN 加 `deleted_at IS NULL`）→ 关联交易软删时不再给出死链「查看记录」。**遗留**：`data/uploads` 磁盘文件已被清空（既有数据状态，非代码缺陷），页面图片 404，重新上传即可恢复。`npm run build` 0 错误，`node --check` + 真实库自检 + 浏览器实测通过。**待确认** |
-| 2026-10-27 | F4 | 设置页按老版 `settings.ejs`（429 行 / 6 个锚点 tab）**全量重写** `SettingsView.vue`，tab 结构**回归老版 6 个**（账号安全 / AI 记账 / 开放 API / 站点设置 / 系统管理 / 运行信息，tab 名与老 hash 锚点一一对应）。**4 个隐性缺陷**：① 后端 `GET /settings` 不返回 `user` → 个人资料 4 项全空（已补白名单字段）；② AI 保存发 camelCase 而后端读 `ai.*` → **配好的 AI 一保存全被清空**（已改字段名，实测保存前后 cfg 完全一致）；③ API Key 明文下发并回填输入框（已改 `hasApiKey` 布尔 + Key 不回填 + 清除勾选，`settings` 全量键值里也删掉 `ai.api_key`）；④ 用户管理只有只读表格、4 个操作按钮全缺（已补，并接上后端 reset/delete 的确认框与新密码提示）。**3 个运行时缺陷**：⑤ naive-ui 2.45.3 下自闭合 `NTabPane` **tab 标题渲染为空**（改用 `NTab`）；⑥ `NCode` 因未装 hljs 报控制台错误（改原生 `<code>`）；⑦ `listAiModels`/`runScheduler`/`changePassword` **响应解包层级错**（`r.models`→`r.data.models`、`r.message`→`r.data.message`）。**功能补齐约 20 项**，老版 6 个 hash 锚点全部兼容。**备份与恢复按老版位置迁到「导出备份」页**（老版在 `export.ejs` 而非设置页）：新增「💾 数据库文件备份」+「♻️ 从备份恢复」两卡。**顺带修后端缺陷**：`GET /api/v1/session` 漏补 `isAdmin` 别名（DB 原始行是 `is_admin`）→ 依赖它的管理员判断全部失真，已在 `apiV1.js` 补齐。`npm run build` 0 错误，`node --check` + 浏览器实测通过，控制台 0 应用级报错。**遗留**：`MembersView` 同款 `NCode` 告警待 F2 处理；「立即执行一次检查 / 恢复备份 / 重置密码」三个会改真实数据的按钮未点确认。**待确认** |
+| 2026-10-27 | F4 | 设置页按老版 `settings.ejs`（429 行 / 6 个锚点 tab）**全量重写** `SettingsView.vue`，tab 结构**回归老版 6 个**（账号安全 / AI 记账 / 开放 API / 站点设置 / 系统管理 / 运行信息，tab 名与老 hash 锚点一一对应）。**4 个隐性缺陷**：① 后端 `GET /settings` 不返回 `user` → 个人资料 4 项全空（已补白名单字段）；② AI 保存发 camelCase 而后端读 `ai.*` → **配好的 AI 一保存全被清空**（已改字段名，实测保存前后 cfg 完全一致）；③ API Key 明文下发并回填输入框（已改 `hasApiKey` 布尔 + Key 不回填 + 清除勾选，`settings` 全量键值里也删掉 `ai.api_key`）；④ 用户管理只有只读表格、4 个操作按钮全缺（已补，并接上后端 reset/delete 的确认框与新密码提示）。**3 个运行时缺陷**：⑤ naive-ui 2.45.3 下自闭合 `NTabPane` **tab 标题渲染为空**（改用 `NTab`）；⑥ `NCode` 因未装 hljs 报控制台错误（改原生 `<code>`）；⑦ `listAiModels`/`runScheduler`/`changePassword` **响应解包层级错**（`r.models`→`r.data.models`、`r.message`→`r.data.message`）。**功能补齐约 20 项**，老版 6 个 hash 锚点全部兼容。**备份与恢复按老版位置迁到「导出备份」页**（老版在 `export.ejs` 而非设置页）：新增「💾 数据库文件备份」+「♻️ 从备份恢复」两卡。**顺带修后端缺陷**：`GET /api/v1/session` 漏补 `isAdmin` 别名（DB 原始行是 `is_admin`）→ 依赖它的管理员判断全部失真，已在 `apiV1.js` 补齐。**用户反馈二次调整**：tab 数从 11 个回归 6 个；AI 记账表单提示语改到输入框下一行（naive `NFormItem` 的 blank 是横向 flex，已加 `.ai-stack` 列布局）。`npm run build` 0 错误，`node --check` + 浏览器实测通过，控制台 0 应用级报错。**遗留**：`MembersView` 同款 `NCode` 告警待 F2 处理；「立即执行一次检查 / 恢复备份 / 重置密码」三个会改真实数据的按钮未点确认。**已确认** |
+| 2026-10-27 | D1 | 账户管理按老版 `accounts.ejs`（183 行）重写 `AccountsView.vue` + 补 `api.v1.accounts.js` 归档字段。**5 个隐性缺陷**：① 前端判 `a.flow?.in` 但后端字段是 `flow.out`/`flow.inflow`（**无 `flow.in`**）→ **近 30 天流水永不显示**（已改老版口径「近30天 −out / +inflow」并移到金额右侧）；② 总负债多套一层 `-Math.abs()` → **显示成负数**（老版是正数，已去掉）；③ 账户副行（币种·尾号·账单日·还款日）**全丢**（已补 `accountMeta()`）；④ 分组用 `Object.keys().sort()` → **字母序**，老版是 `ACCOUNT_TYPES` 定义顺序（已改）；⑤ 后端 `archived` 未补 `flow`/`typeLabel`/`isLiability`（已补）。**14 项功能补齐**：统计卡 3 条 hint 副标题、净资产负数标红、「共 N 个在用账户，M 个已停用」+「＋ 添加账户」、每组卡头「合计 ¥X」、行内补**「明细」**和**「余额调整」**两个操作（老版有、新版缺）、账户行改上下两行且操作按钮**常显**（原 `display:none` 靠 hover，移动端点不到）、负债类账户余额也标红、币种补齐 7 种（缺 GBP/SGD）且默认取站点本位币、额度/账单日/还款日**去掉 credit 条件**（老版无条件显示）、空态与已停用卡文案回老版、删除确认文案回老版。**术语统一**为老版「停用」。**后端**：`GET /accounts` 的 archived 补 3 字段。`npm run build` 0 错误，`node --check` + 浏览器实测（含创建外币账户→编辑存账期→余额调整→停用→删除拦截→**测试数据已清理**）通过。**遗留**：`AccountDetailView`（D2）余额调整提示语 `r.delta` 应为 `r.data.delta`，留待 D2。**待确认** |
