@@ -21,7 +21,7 @@ router.get('/session', (req, res) => {
   const u = res.locals.user || null;
   api.ok(res, {
     // 前端 store 按 camelCase 消费（见 web/src/stores/session.ts），此处补齐别名
-    user: u ? { ...u, displayName: u.display_name || u.username } : null,
+    user: u ? { ...u, displayName: u.display_name || u.username, isAdmin: !!u.is_admin } : null,
     ledger: res.locals.ledger || null,
     ledgers: res.locals.ledgers || [],
     csrf: auth.csrfToken(req),

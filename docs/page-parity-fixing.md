@@ -466,8 +466,75 @@ B1 第二轮修复（用户截图反馈后）：
 | F1 | 账本管理 | `ledgers.ejs` | `LedgersView.vue` | 待修 | |
 | F2 | 成员权限 | `members.ejs` | `MembersView.vue` | 待修 | |
 | F3 | 通知中心 | `notifications.ejs` | `NotificationsView.vue` | 待修 | 需同步 `session.setUnread()` |
-| F4 | 设置 | `settings.ejs`（25KB，最大） | `SettingsView.vue` | 待修 | |
+| F4 | 设置 | `settings.ejs`（25KB，最大） | `SettingsView.vue` | 待确认 | 见下方修复清单（回归老版 6 个 tab + 4 个隐性缺陷 + 3 个运行时缺陷）；**修复后即可在设置页配好 AI，B6/B7 的完整验证前提已具备** |
 | F5 | 关于 | `about.ejs` | `AboutView.vue` | 待修 | |
+
+#### F4 设置修复（2026-10-27）
+
+以老版 `src/views/settings.ejs`（429 行、6 个锚点 tab）为行为基准，逐项比对后重写 `SettingsView.vue`。
+
+**tab 结构：完全对齐老版的 6 个 tab**（账号安全 / AI 记账 / 开放 API / 站点设置 / 系统管理 / 运行信息）。tab 名与老版 hash 锚点一一对应，`/settings#admin` 这类老链接可直接命中。
+
+**隐性缺陷（编译不报错、功能全废，4 项）**
+
+| # | 缺陷 | 现象 | 改法 | 影响文件 |
+|---|---|---|---|---|
+| 1 | `GET /api/v1/admin/settings` **不返回 `user` 字段** | 实测 `topKeys: ["cfg","aiReady","settings","isAdmin","admin","apiTokens","envInfo"]`，`hasUser: false` → 前端 `d.user?.username` 全为空 → **「个人资料」tab 的昵称/用户名/邮箱/头像全部空白**（浏览器实测 `profileFields: ["头像 = (空)","显示名 = (空)","用户名 = (空)","邮箱 = (空)"]`） | 后端补 `user` 白名单字段（id / username / display_name / email / avatar_color / avatar_path / avatar_ver / theme / is_admin / status / created_at / last_login_at） | `api.v1.admin.js` |
+| 2 | AI 配置「保存」**把配置全清空** | 前端发 camelCase（`base_url`/`model`/`enabled`/`vision`…），后端 `PUT /settings/ai` 读的是 `req.body['ai.base_url']`/`['ai.model']`/`['ai.enabled']`… → **一个都读不到** → `ai.base_url` 写成 `''`、`ai.model` 写成 `''`、`ai.enabled`/`ai.vision` 写成 `'false'`，用户配好 AI 一保存就全没了 | 前端 `saveAI()` 改发 `ai.*` 字段名（与后端、老版表单字段名三方一致），后端不动 | `SettingsView.vue` |
+| 3 | AI API Key **明文下发并回填输入框** | 实测 `cfgKeys` 含 `apiKey`、`apiKeyLen: 125`。老版明确注释「真实 Key 与掩码都不回填到 value，避免用户只是改了别的字段却在保存时把掩码当成 Key 提交」，并提供「清除已保存的 API Key」勾选 | 后端 `cfg` 剥离 `apiKey` 改 `hasApiKey: boolean`；`settings` 全量键值里 `delete allSettings['ai.api_key']`（原实现把 settings 表整包下发，**同样带出 Key 明文**）；前端输入框留空 + placeholder「已保存 API Key —— 留空即保持不变…」+ 清除勾选 | `api.v1.admin.js`、`SettingsView.vue` |
+| 4 | 用户管理**只有只读表格，4 个操作按钮全缺** | 后端 `POST /admin/users/:id/action` 已实现 promote/demote/disable/enable/reset/delete，前端 `userColumns` 无操作列 | 前端补操作列（设为管理员/取消管理员、禁用/启用、`NPopconfirm` 重置密码 / 删除）；reset 成功后展示新密码 + 「其所有登录已失效」提示；提示语改中文映射（原为 `已执行：demote`） | `SettingsView.vue` |
+
+**运行时缺陷（3 项）**
+
+| # | 缺陷 | 现象 | 改法 | 影响文件 |
+|---|---|---|---|---|
+| 5 | naive-ui 2.45.3 下**自闭合 `NTabPane` 的标签渲染为空** | 6 个 tab 的文字全部不显示（`.n-tabs-tab__label` 内只有注释节点）。根因：`Tabs.mjs` 里 `normalizeSlots(tabPaneVNode.children ? { default: tabPaneVNode.children.tab } : void 0)`，`normalizeSlots(undefined)` 会造一个返回 `undefined` 的默认插槽，`Tab` 里 `defaultSlot` 恒为真 → 永远走插槽分支而不渲染 `tab` 属性 | 改用 `<NTab name="x" tab="标签" />`（`Tab` 组件的 `__TAB__` 分支直接渲染 `tab` 属性），并移除 `NTabPane` import | `SettingsView.vue` |
+| 6 | `NCode` 组件**报控制台错误** `[naive/code]: hljs is not set.` | 项目未装 `highlight.js`，`NCode` 在 setup 阶段告警 | 令牌尾号列改用原生 `<code>` 元素（老版同样是纯文本 `mono`，无语法高亮需求），移除 `NCode` import | `SettingsView.vue` |
+| 7 | **接口响应解包层级错**（2 处） | ① `listAiModels` 取 `r.models`，实际 body 是 `{ok,data:{baseUrl,count,models}}` → **换个支持 `/models` 的接口（智谱/DeepSeek/Ollama）下拉必然拿不到模型**；② `runScheduler` / `changePassword` 取 `r.message`，但后端用 `api.ok` 返回时提示语在 `data.message` 里 → 只能显示兜底文案 | 分别改为 `r?.data?.models`、`r?.data?.message` | `SettingsView.vue` |
+
+**功能补齐（对齐老版 6 个 tab，约 20 项）**
+
+| # | 老版能力 | 新版实现 |
+|---|---|---|
+| 8 | 个人资料 | 头像（`NAvatar` + 换头像 + 恢复默认）、昵称、用户名（help：2-24 位 + 改后需重新登录）、邮箱、头像颜色（`NColorPicker`，老版是 `<input type=color>`）、保存资料 |
+| 9 | 修改密码 + 注册时间 / 上次登录 | 与「个人资料」同在 `#account` tab 的右栏（`NGrid` 双栏）：当前密码 / 新密码（≥6 位）/ 确认新密码 + 注册时间、上次登录 |
+| 10 | 外观主题 | `#account` tab 左栏底部（`NDivider` 之下）：显示「当前：浅色 / 深色」+「切换到深色 / 浅色」按钮（对齐老版的切换链接，非单选组） |
+| 11 | AI 记账 | 「已配置 / 未配置」chip、4 个推荐接口可一键填入（智谱 GLM / 通义千问 / DeepSeek / Ollama）、Base URL help、获取可用模型（能读图标 ✅）、API Key 不回填 + 清除勾选、3 个开关（启用 / 视觉 / 自动入库）、超时时间 help、保存配置 / 测试连接 / 「去试试截图记账 →」、非管理员只读提示「当前模型：X」 |
+| 12 | 站点设置（仅管理员） | 站点名称、本位币（`NSelect`：CNY/USD/EUR/HKD/JPY/SGD）、登录失败上限、开放自助注册 + help |
+| 13 | 开放 API | 新令牌打码 + 显示/隐藏 + 复制令牌、令牌权限说明、AI 助手接入说明（Hermes Agent / OpenClaw）、4 段 curl 示例、令牌表（名称/尾号/最近使用/创建时间/吊销） |
+| 14 | 用户管理 | `#admin` tab：5 个统计卡（用户/账本/记账总数/账单截图/占用空间 + delta）、6 列表格（用户/角色/账本·记录/最近登录/状态/操作）、操作 4 键 + reset 新密码提示 |
+| 15 | 后台任务 | `#admin` tab：调度说明 + 「立即执行一次检查」（`POST /admin/run-scheduler`） |
+| 16 | 备份与恢复 | **迁出设置页 → 「导出备份」页**（老版即在 `export.ejs`）：「💾 数据库文件备份」卡（下载 .db + NAS 建议）+「♻️ 从备份恢复」卡（高风险警告 + 选 .db 文件），仅管理员可见 |
+| 17 | 审计日志 | `#admin` tab：6 列（时间/用户/动作/对象/详情/IP），后端按老版 `util.js` 的中文映射预格式化 `action_label`/`target_label`/`detail_label`，最近 60 条 |
+| 18 | 运行信息 | `#env` tab：Node 版本 / 运行平台 / 进程 PID / 时区 / 已运行（X 小时 Y 分）/ 内存占用 / 数据目录 / 数据库大小 / 数据库文件 / 备份方式；PID 与内存占用仅管理员可见（对齐老版） |
+| 19 | 老版 hash 锚点 | 6 个锚点与 tab 名一一对应：`#account`→账号安全、`#ai`→AI 记账、`#api`→开放 API、`#site`→站点设置、`#admin`→系统管理、`#env`→运行信息，未知 hash 落回默认 tab |
+
+**顺带修复的一处后端缺陷（2026-10-27）**：`GET /api/v1/session` 返回的 user 是数据库原始行（`is_admin`），而前端 store 的 `SessionUser` 声明的是 camelCase `isAdmin`（同 `displayName` 一样需要别名）→ **别名漏补**，`session.user.isAdmin` 恒为 undefined → 依赖它的「是否管理员」判断全部失真（例如导出页的「下载 .db 数据库」按钮对 admin 也显示「仅管理员可下载」）。已在 `apiV1.js` 补 `isAdmin: !!u.is_admin`。
+
+**有意偏离老版一处**：老版「个人资料 / 外观主题」与「修改密码」同在 `#account` 一个 tab 内（左右两栏），新版同样用 `NGrid` 双栏布局放在同一个「账号安全」tab 里，仅把老版的「切换到深色」链接改成按钮（视觉统一，功能等价）。
+
+**已知遗留 1（既有页面的同类问题，不在 F4 范围）**：`MembersView.vue`（F2 成员权限）也用了 `NCode`，同样会打 `[naive/code]: hljs is not set.` 控制台错误 —— 待 F2 阶段一并处理（老版同样无 highlight.js 依赖，不建议为 F4 引入新依赖）。
+
+**F4 二次调整（2026-10-27，用户反馈）**：① **tab 数量回归老版 6 个** —— 原先拆成 11 个 tab（个人资料 / 账号安全 / 主题外观 / AI 记账 / 站点设置 / 开放 API / 用户管理 / 后台任务 / 备份 / 审计日志 / 运行信息）太碎，改为老版的 6 个：**账号安全 / AI 记账 / 开放 API / 站点设置 / 系统管理 / 运行信息**，tab 名与老版 hash 锚点一一对应（`#account`/`#ai`/`#api`/`#site`/`#admin`/`#env`）；「个人资料 + 外观主题」与「修改密码 + 注册信息」按老版 `grid-2` 并排放在「账号安全」tab 的左右两栏（`NGrid`），「统计卡 + 用户管理 + 后台任务 + 审计日志」4 块合并进「系统管理」tab。
+② **备份与恢复迁出设置页 → 「导出备份」页**（老版 `export.ejs` 就在这一页，不在设置页）：新增「💾 数据库文件备份」（下载 .db + NAS 快照建议）+「♻️ 从备份恢复」（高风险警告 + 选 .db 文件）两张卡，仅管理员可见。
+③ **AI 记账表单布局修正** —— naive-ui 的 `NFormItem` 内容区是 `display:flex` 横向排列，导致提示语（`NText`）与输入框挤在同一行。改为给这 3 个表单项加 `.ai-stack` 类，把 blank 容器改为 `flex-direction: column`：接口地址 / 模型名称 / API Key 的提示语各自落到输入框下一行；模型名称行内部保持「输入框 → 获取可用模型 → 预设下拉」三元素同行，提示语独占下一行。`.hint.block` 补 `width: 100%` 以便在 flex 容器内真正换行。
+④ **顺带修后端缺陷**：`GET /api/v1/session` 返回的 user 是数据库原始行（`is_admin`），而前端 `SessionUser` 声明的是 camelCase `isAdmin`（与 `displayName` 一样需要别名）→ **别名漏补**，`session.user.isAdmin` 恒为 undefined → 所有「是否管理员」判断失真（如导出页对 admin 也显示「仅管理员可下载」）。已在 `apiV1.js` 补 `isAdmin: !!u.is_admin`。
+
+**未执行的验证（会产生真实数据，留给用户）**：① 「立即执行一次检查」会真实生成到期的周期账单并写入账本；② 「从备份恢复」会覆盖当前数据库；③ 「重置密码」会改掉 admin 自身密码并使其余设备掉线。以上三个按钮的前端链路与后端接口均已核对存在（`POST /admin/run-scheduler`、`POST /backup/restore`、`POST /admin/users/:id/action`），但未在浏览器里点确认执行。
+
+**验证**：`npm run build`（`vue-tsc --noEmit && vite build`）0 错误、exit 0，产物含 `SettingsView-*.js`；`GetDiagnostics` 无诊断；`node --check src/routes/api.v1.admin.js`、`node --check src/routes/apiV1.js` 均通过；后端 `GET /settings` 实测 `hasUser: true`、`cfg` 不含 `apiKey`、`settings['ai.api_key']` 已剔除、审计日志带 `action_label`/`target_label`/`detail_label`。
+
+**浏览器实测**（Vite dev + 后端 5111 已运行，Chrome 实测）：
+- **6 个 tab 标签文字全部正常显示**（修复缺陷 5 后）：`账号安全 | AI 记账 | 开放 API | 站点设置 | 系统管理 | 运行信息`，逐个点击均渲染对应内容，无空白
+- 「账号安全」双栏：左栏个人资料（昵称 `admin`、用户名 `admin`、邮箱空、头像颜色 `#722ed1`、外观主题「当前：浅色 / 切换到深色」）+ 右栏修改密码 + 注册时间 `2026-10-15 10:03` / 上次登录 `2026-10-26 10:02` —— 修复前 4 项全空
+- AI 记账：chip「已配置」；Base URL `https://api.minimax.cn/v1`、模型 `MiniMax-M3.1-Flash-Preview`、超时 `90000` 正常回填；API Key 输入框**为空**、placeholder「已保存 API Key —— 留空即保持不变，要更换请直接粘贴新的」；点「保存配置」→ 审计日志新增 `id 81 / 修改 AI 配置 / 10:11:01`，**保存前后 `GET /settings` 的 `cfg` 完全一致**（`hasApiKey` 仍为 true、`aiReady` 仍为 true、`apiKey` 字段仍不在响应里）—— 缺陷 2 已闭环
+- 「系统管理」tab：5 个统计卡（用户 1 / 账本 2 / 记账总数 1360 / 账单截图 3 / 占用空间 10.00 MB）+ 用户管理表（admin / 管理员 / 2 本·1360 笔 / 正常 / 4 个操作按钮均可点）+ 后台任务卡 + 审计日志表（中文动作名）
+- 「运行信息」tab：Node `v22.20.0` / win32 / PID `13340` / Asia/Shanghai / 已运行 0 小时 31 分 / 内存 55 MB / 数据目录 / 数据库大小 10236.0 KB / homeledger.db / 备份方式
+- 「站点设置」tab：站点名称、本位币 CNY、登录失败上限、开放自助注册
+- 「开放 API」tab：令牌权限说明 + 4 段 curl 示例 + 令牌表（当前 0 个令牌）
+- 老版 hash 锚点：`/settings#admin` → 命中「系统管理」tab（URL 自动转为 `?tab=admin`），6 个锚点与 tab 名一一对应
+- 「导出备份」页新增「💾 数据库文件备份」（下载 .db）+「♻️ 从备份恢复」（高风险警告 + 选文件），均仅管理员可见
+- 控制台：0 应用级报错（仅 Electron 插件自身的 `MaxListenersExceededWarning` 与导航 `ERR_ABORTED`，与页面无关）
 
 ---
 
@@ -520,3 +587,4 @@ B1 第二轮修复（用户截图反馈后）：
 | 2026-10-26 | B6-2 | 用户在控制台看到 **2 条 Vue 警告** → 定位为 `SettingsView.vue` 漏 import `NGrid` / `NGridItem`（「系统信息」tab 栅格失效，已修）+ `NTag as NTagRaw` 死代码（已移除）。顺带全站 30 路由控制台巡检：**`/search` 页白屏** —— `NDatePicker` 直接绑 `''` 字符串（naive 只收毫秒时间戳）→ `RangeError: Invalid time value` 致 setup 抛错、组件不渲染，属 C2 范围未动，已记入遗留。修复后除 `/search` 外全站控制台 0 警告。`npm run build` 0 错误。**待确认** |
 | 2026-10-26 | B6-3 | 用户决策：`/search` 白屏**留到 C2 阶段与搜索筛选页一并修复**，本轮不动代码；根因与修法已回写进 C 组表格 C2 行的备注列，避免 C2 阶段重新排查。**待确认** |
 | 2026-10-26 | B7 | 截图库 11 项（详见上表）。新版原**完全没有此页**（`/attachments` 走 catch-all → 404），已新建 `AttachmentsView.vue` + 补路由 + 侧栏「AI」高亮映射（对齐老版 `activeNav: 'ai'`）。含：老版同款卡头计数文案 + 双「＋ 上传新截图」入口、🖼️ 空态 + 「去体验 AI 截图记账」、36 条/页分页（复用明细页固定 5 页滑动窗口）、图注三行（金额/商家/日期·KB）、`NImage` 点击放大（正向增强）、`NPopconfirm` 删除确认 + 只读门控、页码与 URL `?page=` 双向同步、删完末页自动回退。**后端**：`/ai/attachments` 补 `t.id AS linked_txn_id`（JOIN 加 `deleted_at IS NULL`）→ 关联交易软删时不再给出死链「查看记录」。**遗留**：`data/uploads` 磁盘文件已被清空（既有数据状态，非代码缺陷），页面图片 404，重新上传即可恢复。`npm run build` 0 错误，`node --check` + 真实库自检 + 浏览器实测通过。**待确认** |
+| 2026-10-27 | F4 | 设置页按老版 `settings.ejs`（429 行 / 6 个锚点 tab）**全量重写** `SettingsView.vue`，tab 结构**回归老版 6 个**（账号安全 / AI 记账 / 开放 API / 站点设置 / 系统管理 / 运行信息，tab 名与老 hash 锚点一一对应）。**4 个隐性缺陷**：① 后端 `GET /settings` 不返回 `user` → 个人资料 4 项全空（已补白名单字段）；② AI 保存发 camelCase 而后端读 `ai.*` → **配好的 AI 一保存全被清空**（已改字段名，实测保存前后 cfg 完全一致）；③ API Key 明文下发并回填输入框（已改 `hasApiKey` 布尔 + Key 不回填 + 清除勾选，`settings` 全量键值里也删掉 `ai.api_key`）；④ 用户管理只有只读表格、4 个操作按钮全缺（已补，并接上后端 reset/delete 的确认框与新密码提示）。**3 个运行时缺陷**：⑤ naive-ui 2.45.3 下自闭合 `NTabPane` **tab 标题渲染为空**（改用 `NTab`）；⑥ `NCode` 因未装 hljs 报控制台错误（改原生 `<code>`）；⑦ `listAiModels`/`runScheduler`/`changePassword` **响应解包层级错**（`r.models`→`r.data.models`、`r.message`→`r.data.message`）。**功能补齐约 20 项**，老版 6 个 hash 锚点全部兼容。**备份与恢复按老版位置迁到「导出备份」页**（老版在 `export.ejs` 而非设置页）：新增「💾 数据库文件备份」+「♻️ 从备份恢复」两卡。**顺带修后端缺陷**：`GET /api/v1/session` 漏补 `isAdmin` 别名（DB 原始行是 `is_admin`）→ 依赖它的管理员判断全部失真，已在 `apiV1.js` 补齐。`npm run build` 0 错误，`node --check` + 浏览器实测通过，控制台 0 应用级报错。**遗留**：`MembersView` 同款 `NCode` 告警待 F2 处理；「立即执行一次检查 / 恢复备份 / 重置密码」三个会改真实数据的按钮未点确认。**待确认** |

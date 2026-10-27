@@ -32,8 +32,9 @@ function hashToken(plain) { return crypto.createHash('sha256').update(String(pla
 
 /* ============================================ 设置 ============================================ */
 router.get('/settings', auth.requireLogin, api.asyncHandler((req, res) => {
-  const cfg = ai.getAiConfig();
+  const rawCfg = ai.getAiConfig();
   const isAdmin = !!res.locals.user.is_admin;
+  const me = res.locals.user;
   let admin = null;
   if (isAdmin) {
     admin = {
@@ -50,13 +51,39 @@ router.get('/settings', auth.requireLogin, api.asyncHandler((req, res) => {
         dbSize: safeSize(DB_FILE),
         uploadsSize: dirSize(path.join(DATA_DIR, 'uploads')),
       },
-      audits: all('SELECT a.*, u.display_name FROM audit_logs a LEFT JOIN users u ON u.id = a.user_id ORDER BY a.id DESC LIMIT 60'),
+      // 动作/对象/详情按老版 util.js 的中文映射预格式化，前端直接渲染
+      audits: all('SELECT a.*, u.display_name FROM audit_logs a LEFT JOIN users u ON u.id = a.user_id ORDER BY a.id DESC LIMIT 60')
+        .map((a) => ({
+          ...a,
+          action_label: u.auditAction(a.action),
+          target_label: u.auditTarget(a.entity, a.entity_id),
+          detail_label: u.auditDetail(a),
+        })),
     };
   }
+  // 全量键值：剔除 API Key 明文，避免密钥随接口下发到浏览器
+  const allSettings = require('../db').allSettings();
+  delete allSettings['ai.api_key'];
   api.ok(res, {
-    cfg,
+    // 当前用户资料（老版 settings.ejs 直接用 user.* 渲染，这里补上等价字段）
+    user: {
+      id: me.id,
+      username: me.username,
+      display_name: me.display_name,
+      email: me.email,
+      avatar_color: me.avatar_color,
+      avatar_path: me.avatar_path,
+      avatar_ver: me.avatar_ver,
+      theme: me.theme,
+      is_admin: !!me.is_admin,
+      status: me.status,
+      created_at: me.created_at,
+      last_login_at: me.last_login_at,
+    },
+    // cfg 不下发 apiKey 明文（老版 EJS 同样只输出 model/baseUrl/vision/autoSave）
+    cfg: { ...rawCfg, apiKey: undefined, hasApiKey: !!rawCfg.apiKey },
     aiReady: ai.isAiReady(),
-    settings: require('../db').allSettings(),
+    settings: allSettings,
     isAdmin,
     admin,
     apiTokens: all(

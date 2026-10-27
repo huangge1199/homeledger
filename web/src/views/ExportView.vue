@@ -69,6 +69,42 @@ const yearColumns = computed<DataTableColumns>(() => [
     }),
   },
 ])
+
+/* --- 数据库文件备份 / 恢复（老版在 export.ejs，不在设置页） --- */
+const isAdmin = computed(() => !!session.user?.isAdmin)
+const restoreInput = ref<HTMLInputElement | null>(null)
+const restoreFileName = ref('')
+const restoring = ref(false)
+function pickRestore() { restoreInput.value?.click() }
+function downloadDbBackup() { window.open(AdminApi.backupDownloadUrl(), '_blank') }
+async function onRestoreFile(e: Event) {
+  const input = e.target as HTMLInputElement
+  const f = input.files?.[0]
+  if (!f) return
+  restoreFileName.value = f.name
+  if (!confirm('恢复会覆盖当前全部数据，确定继续？')) {
+    input.value = ''
+    restoreFileName.value = ''
+    return
+  }
+  const reader = new FileReader()
+  reader.onload = async () => {
+    restoring.value = true
+    try {
+      const r = await AdminApi.restore(String(reader.result))
+      // 后端用 api.ok 返回，提示语在 data.message 里
+      success(r?.data?.message || '恢复完成，请重新登录')
+      // 老版恢复后会销毁当前会话，需要重新登录
+      setTimeout(() => { location.href = '/login' }, 1500)
+    } catch (err: any) {
+      toastError(errorMessage(err, '恢复失败'))
+    } finally {
+      restoring.value = false
+      input.value = ''
+    }
+  }
+  reader.readAsDataURL(f)
+}
 </script>
 
 <template>
@@ -112,6 +148,30 @@ const yearColumns = computed<DataTableColumns>(() => [
       <NCard :bordered="true" class="hist-card" title="📅 有数据的年度">
         <Empty v-if="!loading && !years.length" icon="📅" title="还没有任何交易" />
         <NDataTable v-else :columns="yearColumns" :data="years.map(y => ({ y }))" :pagination="false" size="small" />
+      </NCard>
+
+      <NCard :bordered="true" class="info-card" title="💾 数据库文件备份">
+        <NText depth="3" class="hint">
+          下载整个 SQLite 数据库文件。<strong>最推荐的做法</strong>：直接在 NAS 上对 <code>data/</code> 目录做快照或定时复制——整个数据目录就包含了会计数据和账单截图。
+        </NText>
+        <NSpace style="margin-top: 12px">
+          <NButton v-if="isAdmin" type="primary" @click="downloadDbBackup">下载 .db 数据库</NButton>
+          <NText v-else depth="3" class="hint">仅管理员可下载数据库文件。</NText>
+        </NSpace>
+      </NCard>
+
+      <NCard v-if="isAdmin" :bordered="true" class="info-card" title="♻️ 从备份恢复">
+        <template #header-extra>
+          <NTag type="warning" size="small" :bordered="false">高风险操作</NTag>
+        </template>
+        <NAlert type="warning" :show-icon="true" style="margin-bottom: 12px">
+          <strong>恢复会覆盖当前全部数据。</strong>系统会自动安全备份当前数据，然后立即切换到你上传的数据库——无需手动替换文件或重启容器。恢复前请务必先下载一份当前数据。
+        </NAlert>
+        <NSpace align="center">
+          <NButton :loading="restoring" @click="pickRestore">选择备份文件</NButton>
+          <NText depth="3" class="hint">{{ restoreFileName || '未选择任何文件' }}</NText>
+        </NSpace>
+        <input ref="restoreInput" type="file" accept=".db,application/octet-stream" style="display: none" @change="onRestoreFile" />
       </NCard>
 
       <NCard :bordered="true" class="info-card" title="📋 导出字段说明">
