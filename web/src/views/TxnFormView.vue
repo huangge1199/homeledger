@@ -207,6 +207,9 @@ async function load() {
       if (Number.isFinite(qAmount) && qAmount > 0) amount.value = qAmount.toFixed(2)
       const qDate = String(q.date || '')
       if (/^\d{4}-\d{2}-\d{2}$/.test(qDate)) date.value = qDate
+      // 时刻：AI 文字快速记账单笔会带 txn_time=HH:mm 或 HH:mm:ss
+      const qTime = String(q.txn_time || '')
+      if (/^\d{1,2}:\d{2}/.test(qTime)) time.value = dayjs(`2000-01-01T${qTime}`).valueOf()
       // 默认账户：取第一个
       if (accounts.value.length) accountId.value = Number(accounts.value[0].id)
       // 分类：必须存在且与当前类型 kind 一致才采用

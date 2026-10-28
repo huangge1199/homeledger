@@ -86,8 +86,8 @@ A1 已修复内容：
 | B3 | 账单明细 | `transactions.ejs` | `TransactionsView.vue` | 已确认 | 见下方修复清单（第一轮 15 项 + 第二轮 19 项 + 第三轮 5 项 + 第四轮 4 项） |
 | B4 | 记录详情 | — | `TxnDetailView.vue` | 已确认 | 新增页（老版是弹窗，非独立页），详见下方修复清单 |
 | B5 | 记账日历 | `calendar.ejs` | `CalendarView.vue` | 已确认 | 见下方修复清单（第一轮 9 项 + 第二轮 8 项） |
-| B6 | AI 截图记账 | `ai.ejs` | `AiView.vue` | 待确认 | 见下方修复清单（15 项，含 2 个隐性缺陷 + 2 条控制台警告修复）；「全部 →」指向的 `/attachments` 独立页已由 B7 补齐；**AI 识别主链路待 F4 配好 AI 后完整验证** |
-| B7 | 截图库 | `attachments.ejs` | `AttachmentsView.vue` | 待确认 | 见下方修复清单（新增独立页 + 路由 + 侧栏高亮 + 后端补 `linked_txn_id`） |
+| B6 | AI 截图记账 | `ai.ejs` | `AiView.vue` | 已确认 | 见下方修复清单（15 项，含 2 个隐性缺陷 + 2 条控制台警告修复）；「全部 →」指向的 `/attachments` 独立页已由 B7 补齐；**AI 识别主链路待 F4 配好 AI 后完整验证**；2026-10-28 补修「AI 识别丢失消费时刻」（B6-4，5 处断点 + 2 处连带） |
+| B7 | 截图库 | `attachments.ejs` | `AttachmentsView.vue` | 已确认 | 见下方修复清单（新增独立页 + 路由 + 侧栏高亮 + 后端补 `linked_txn_id`） |
 
 B1 第一轮修复（后端 `/api/v1/dashboard` 数据本来就全，缺的是前端消费）：
 
@@ -389,6 +389,61 @@ B1 第二轮修复（用户截图反馈后）：
 - AI 页：两栏布局正常，识别历史画廊渲染 3 张图（金额 4.00 / 647.88 / 647.88，与库内一致），三态提示显示「已连接模型 MiniMax-M3.1-Flash-Preview…视觉能力已开启」
 - 设置页「系统信息」tab：`NGrid` 渲染正常（`.n-grid` 存在，子项带 `grid-column: span 1 / span 1`），控制台 0 警告
 
+**2026-10-27 补充：F4 配好 AI 后的完整链路实测（真实视觉模型）**
+
+前置：`GET /api/v1/admin/settings` 返回 `aiReady: true`，配置为 `baseUrl=https://api.siliconflow.cn/v1`、`model=Qwen/Qwen3-VL-8B-Instruct`、`vision=true`、`autoSave=false`、`hasApiKey=true`、`timeoutMs=90000`。
+
+| # | 环节 | 实测结果 |
+|---|---|---|
+| 1 | B6 页三态提示 | 「已连接模型 Qwen/Qwen3-VL-8B-Instruct（https://api.siliconflow.cn/v1）· 视觉能力 已开启 · 自动保存 关闭（识别后需你确认）」 |
+| 2 | **粘贴上传** | 在页面 `document` 上派发带文件的 `ClipboardEvent('paste')` → 图片进入预览区并出现「✕」删除按钮；预览 `src` 为 `data:image/png;base64,...` |
+| 3 | **真实视觉识别** | 点「开始识别」，约 90 秒后返回，引擎标识「**AI 视觉模型 · Qwen/Qwen3-VL-8B-Instruct**」，识别出 1 笔 |
+| 4 | **识别准确度** | 测试图内容 `MERCHANT RECEIPT / Lunch Combo / Total: 58.00 CNY / Date: 2026-10-25 / Paid by Alipay` → 识别结果：金额 **58.00**、日期 **2026年10月25日**、类型「支出」、分类「餐饮/午餐」、账户「📱支付宝」、商家「Lunch Combo 午餐」、置信度「把握 95%」—— **5 项全对** |
+| 5 | **结果可编辑** | 草稿卡含「删除」按钮 + 金额 / 日期 / 类型 / 分类 / 账户 / 商家备注 6 个可编辑字段 + 底部「确认并保存 1 笔」「清空重来」 |
+| 6 | **一键入库** | 点「确认并保存 1 笔」→ 跳转 `/transactions`；DB 校验新增交易 `id=4053`：`txn_date=2026-10-25`、`amount_cents=5800`、`merchant='Lunch Combo 午餐'`、`source=ai_screenshot` |
+| 7 | **原图留存并关联** | DB 校验附件 `id=10`：`file_name=bill-test.png`、`size=19003`、`ai_status=**linked**`、`txn_id=4053` —— 原图自动挂到新交易上 |
+| 8 | **文字快速记账** | 输入「午饭 35 支付宝」→ 点「解析」→ 跳 `/transactions/new?type=expense&amount=35.00&date=2026-10-27&note=午饭&category_id=3&account_id=7`；目标页表单回填正确（金额 35.00 / 日期 2026年10月27日 / 备注 午饭）。后端 `/ai/text` 直调同样正常（`engine=llm`、`amount_cents=3500`、`category_name=餐饮/午餐`、`account_name=支付宝`、`confidence=0.95`） |
+| 9 | **识别历史画廊** | B6 右栏「识别历史」渲染 4 张图（金额 + 商家/分类），右下角「全部 →」点击后跳转 `/attachments` |
+| 10 | **B7 截图库** | 标题「账单截图」+ 副标题「AI 识别过的账单原图都存在这里，可随时回看」；卡头「共 N 张截图，存放在服务器的 data/uploads 目录中」+「＋ 上传新截图」；新截图图注「58.00 / Lunch Combo 午餐 / 2026-10-27 · 19 KB」；「查看记录」链接指向 `/transactions/4053`（与 DB 里的 `txn_id` 一致） |
+| 11 | **B7 删除** | 点「删除」弹出确认框「删除这张截图？」+「取消 / 删除」；确认后数量 5 → 4，图消失 |
+| 12 | **B7 侧栏高亮** | 在 `/attachments` 页，侧栏「AI 截图记账」项带 `n-menu-item-content--selected`（老版 `activeNav: 'ai'` 的口径 —— 截图库是 AI 页子页，不单列菜单项） |
+| 13 | 控制台 | 0 应用级报错/警告（仅调试脚本自身的 2 条报错） |
+| 14 | **测试数据清理** | 测试交易 4053 已软删、测试附件 id 10 已删；DB 校验附件总数回到 **4**，截图库显示「共 4 张截图」 |
+
+> 说明：第 3 项耗时约 90 秒（接近 `timeoutMs=90000` 上限），是硅基流动上 8B 视觉模型的正常推理耗时，非代码问题；期间页面显示 loading 态无异常。
+
+---
+
+#### B6-4 修复：AI 识别丢失「消费时刻」（2026-10-28）
+
+**现象（用户实测反馈）**：「识别的时候忽略时间了，你没有把时间存下来，同样的后续操作我全没有看到具体时间」。
+
+**根因**：`txn_time` 字段在 B1 阶段已建好（`db.js` 建表 + 幂等迁移、`txn.js` 读写与正则校验、`TxnFormView` 的 `NTimePicker`、列表与详情的展示），但 **AI 识别这条链路从头到尾没有碰过它** —— 共 5 处断点：
+
+| # | 断点 | 位置 | 改法 |
+|---|---|---|---|
+| 1 | **提示词根本不要时刻** | `src/lib/ai.js` `SYSTEM_PROMPT` | 新增第 5 条「时刻格式 HH:mm（24 小时制，如 "12:30"）。截图里能看到具体消费时刻就填，**看不到就留空字符串**，不要编造」；输出格式示例补 `"txn_time":"12:30"` |
+| 2 | **模型输出被丢弃** | `src/lib/ai.js` `normalizeItem` | 新增 `normalizeTime()` 统一格式（`12:30`/`12：30`/`12:30:05` → `HH:mm`，`8:05` → `08:05`，非法值如 `25:99` 返回空串）；`normalizeItem` 补 `txn_time: normalizeTime(raw.txn_time \|\| raw.time)` |
+| 3 | **规则引擎不抽时间** | `src/lib/ai.js` `parseTextByRules` | 新增 `extractTime()`，支持 `12:30` / `12：30` / `12:30:05` / `12点30分` / `下午3点`（下午 +12）/ `凌晨12点`（→00:00）；每行解析结果补 `txn_time` |
+| 4 | **入库不传时刻** | `src/routes/api.v1.ai.js` `POST /confirm`、`POST /chat` | `txn.createTransaction(...)` 补 `txn_time: it.txn_time \|\| ''`（两个接口都漏了） |
+| 5 | **前端无处可改、无处可传** | `web/src/views/AiView.vue` | ① `Draft` 接口补 `txn_time`；② `toDraft` 回填 `normalizeTimeText(it.txn_time)`（统一 `HH:mm:ss`）；③ 草稿卡「日期」后新增「时刻」`NTimePicker`（`format="HH:mm"`、`:clearable`）；④ `buildItems()` 带上 `txn_time`；⑤ **文字快速记账单笔跳转**的 query 补 `txn_time`（老版 `from_ai` 行为，只带 type/amount/date/note/category_id/account_id） |
+
+**连带修 2 处**：
+- `web/src/views/TxnFormView.vue`：新建模式解析 `route.query` 时**没读 `txn_time`** → AI 文字记账带时刻跳过来时表单时刻为空。补 `const qTime = String(q.txn_time \|\| '')`，匹配 `/^\d{1,2}:\d{2}/` 时写入 `time.value`
+- `AiView.vue` 的 `NTimePicker` 去掉 `formatted-value` 属性（与 `value` 混用会导致显示与实际值不同步），只保留 `:value` + `@update:value`
+
+**验证**：
+- `npm run build`（`vue-tsc --noEmit && vite build`）0 错误、exit 0
+- `node --check src/lib/ai.js` / `src/routes/api.v1.ai.js` / `src/lib/txn.js` 全部通过
+- 解析逻辑自检（14 组用例全对）：`12:30`→`12:30`、`12：30`→`12:30`、`19:05:23`→`19:05`、`下午3点`→`15:00`、`12点30分`→`12:30`、`凌晨12点`→`00:00`、无时刻→`''`；模型侧 `8:05`→`08:05`、`time` 字段别名→正常、`25:99`→空串
+- 入库链路自检：`createTransaction` 写入 `txn_time='12:30:00'`，`getTransaction` / `listTransactions` 读回一致
+- 浏览器端到端实测（**临时在 5112 端口起独立实例**，不触碰用户正在运行的 5111；SQLite 为 WAL 模式可并发读写，测完已停掉该实例）：
+  - **文字快速记账**：输入「午饭 35 支付宝 12:30」→ 跳 `/transactions/new?...&txn_time=12:30`，表单时刻选择器预填 `12:30:00` → 提交后 DB `txn_time='12:30:00'`，列表行显示 `12:30:00`，详情页显示「2026-10-28 12:30:00」
+  - **截图识别**：生成含 `RECEIPT / 2026-10-27 12:45 / LUNCH COMBO / TOTAL: 58.00 CNY / PAID BY ALIPAY` 的测试图 → 上传 → 「开始识别」（约 60 秒）→ 引擎「AI 视觉模型 · Qwen/Qwen3-VL-8B-Instruct」，**草稿卡「时刻」字段自动预填 `12:45`** → 点「确认并保存 1 笔」→ DB 新增 `txn_date=2026-10-27`、`txn_time='12:45:00'`、`amount_cents=5800`、`source=ai_screenshot`，列表行显示 `12:45:00` + 📎1 + AI 标签
+- **测试数据已清理**：交易 4056 / 4057 与关联附件 id 11 已删除，DB 校验交易回到 2710 笔、附件回到 4 条；`data/_test_receipt.png` 与 `data/uploads/_test_receipt.png` 已删；临时脚本已删
+
+> 说明：后端进程未带 `--watch`，本次实测是在 5112 端口另起实例验证新代码；用户原有的 5111 进程全程未中断，需重启后才会加载本次后端改动。
+
 ---
 
 #### B7 截图库修复（2026-10-26）
@@ -442,9 +497,67 @@ B1 第二轮修复（用户截图反馈后）：
 | D2 | 账户详情 | `account-detail.ejs` | `AccountDetailView.vue` | 待修 | |
 | D3 | 预算管理 | `budgets.ejs` + `partials/budget-cat-options.ejs` | `BudgetsView.vue` | 待修 | |
 | D4 | 周期账单 | `recurring.ejs` | `RecurringView.vue` | 待修 | |
-| D5 | 订阅扣费 | `subscriptions.ejs` | `SubscriptionsView.vue` | 待修 | 老版 16.5KB，功能最重之一 |
+| D5 | 订阅扣费 | `subscriptions.ejs` | `SubscriptionsView.vue` | 已确认 | 见下方修复清单（2 个隐性缺陷 + 16 项功能补齐 + 币种符号支持）；**统计卡全为 0 的致命 bug 已修，分组/月均/历史扣费/管理页外链已补齐** |
 | D6 | 借贷台账 | `debts.ejs` | `DebtsView.vue` | 待修 | |
 | D7 | 储蓄目标 | `goals.ejs` | `GoalsView.vue` | 待修 | |
+
+#### D5 订阅扣费修复（2026-10-27）
+
+以老版 `src/views/subscriptions.ejs`（307 行）+ `src/routes/subscriptions.js`（222 行）为行为基准，重写 `web/src/views/SubscriptionsView.vue`，并补齐 `src/routes/api.v1.subscriptions.js` 的 JOIN 与审计日志。
+
+**2 个隐性缺陷：**
+
+| # | 缺陷 | 现象 | 根因 | 修法 | 文件 |
+|---|---|---|---|---|---|
+| 1 | **3 张统计卡全部显示 0** | 「月均支出 / 年总支出 / 活跃数」永远是 ¥0.00 / 0 | 前端读 `overview.monthly` / `overview.yearly` / `overview.activeCount`，而后端 `subs.overview()` 返回的是 **`monthlyTotal` / `annualTotal` / `live[]`**（另还有 `trials`/`paused`/`canceled`/`annualPaidCount`/`dueThisMonth`/`thisMonthCharged`/`upcoming`）→ **字段名全不匹配** | 全部改成后端真实字段名；统计卡从 3 张补成老版的 **4 张**（生效中订阅 / 每月固定支出 / 每年合计 / 本月待扣·已扣） | `SubscriptionsView.vue` |
+| 2 | **列表拿不到账户名 / 分类名 / 扣费笔数** | 卡片底部「支付账户」永远为空 | `GET /subscriptions` 用 `SELECT * FROM subscriptions` 未 JOIN，而 `subs.overview()` 里的 SQL 才带 JOIN → 但前端读的是 `items`（未 JOIN 那个） | `GET /subscriptions` 改为与 `subs.overview()` 同样的 LEFT JOIN（accounts / categories），并补 `charge_count` | `api.v1.subscriptions.js` |
+
+**16 项功能补齐：**
+
+| # | 老版能力 | 新版现状 | 修法 |
+|---|---|---|---|
+| 1 | 顶部说明卡（讲清与「周期账单」的区别） | 缺失 | 补 `NAlert` 说明卡，文案照搬老版 |
+| 2 | 按状态分 **4 组**（生效中 / 试用中 / 已暂停 / 已取消），各带数量标题 | 全部平铺在一个 grid | 新增 `groups` computed + 组标题「生效中（2）」 |
+| 3 | 卡片 chips：状态 / 周期 / **到期自动记账 · 仅提醒** / **试用至 X** | 只有状态 tag + 周期文本 | 补「到期自动记账 / 仅提醒」chip（`auto_renew` 决定配色）与「试用至 X」chip（7 天内转警告色） |
+| 4 | 金额右侧「不周期 · 手动记账」/「固定到期日 · 到期提醒」/「**周期 · 月均 ¥X**」 | 只有「金额 / 每月」，**月均换算缺失** | 新增 `amountSub(s)`，用后端已算好的 `monthly_cents` |
+| 5 | 详情行：下次扣费（带 **到期标签**「3 天后」）/ **上次扣费** / **账户** / **分类** / **已自动记账 N 笔** / **全年 ¥X** | 只有「下次扣费」+「支付账户」 | 补齐 4 项，用后端 `dueLabel` / `last_charge_at` / `charge_count` / `annual_cents` / `category_icon` |
+| 6 | 3 天内到期 / 已逾期的**扣费日标红** | 缺失 | 新增 `isUrgent` / `isOverdue`，加 `.danger` 类 |
+| 7 | 备注行 📝 | 缺失 | 补 |
+| 8 | 操作按钮 7 个，含 **「管理页 ↗」外链**（`vendor_url`） | 6 个，**缺管理页外链** | 补 `NButton tag="a" :href :target="_blank" rel="noopener noreferrer"` |
+| 9 | 按钮文案：立即扣费一期 / 跳过本期 / 暂停·恢复 / **标记已取消** | 立即记账 / 跳一次 / 启用·暂停 / 取消 | 换回老版文案；「已取消」状态下按钮变「恢复」 |
+| 10 | **历史扣费记录**卡（编辑时显示最近 N 笔） | 缺失 | 编辑抽屉底部新增「历史扣费记录」区，用 `GET /subscriptions/:id` 的 `history`（日期 · 备注 + 金额） |
+| 11 | 表单：**币种**下拉（5 种） | 缺失 | 补 CNY/USD/HKD/JPY/EUR |
+| 12 | 表单：**管理页地址** | 缺失 | 补 `vendor_url` |
+| 13 | 表单周期 **7 种**（每月/每季/每半年/每年/每周/固定到期日/不周期） | 只有 5 种，**缺每季、每半年** | 补齐（后端 `CYCLE_MONTHS` 本就支持 quarterly / half_yearly） |
+| 14 | 周期联动：`none` **隐藏**下次扣费日；`fixed` 标签改「**到期日**」 | 缺失 | `v-if="form.cycle !== 'none'"` + `nextChargeLabel` computed |
+| 15 | 状态只 3 项；**已取消的订阅编辑时不复活** | 多了「已取消」选项 | 选项改回 3 项；已取消的订阅编辑时补一个只读「已取消」项（后端 `if (old.status === 'canceled') d.status = 'canceled'` 兜底） |
+| 16 | 扣费 / 暂停 / 取消 / 删除 / 更新 **5 个写操作都有审计日志** | 后端**全部没写 `auth.audit`** | 补 `subscription.update` / `charge` / `toggle` / `cancel` / `delete` 5 条审计 |
+
+**币种符号支持（跨页面增强）**：老版金额用 `helpers.currencySymbol(it.currency)`（CNY ¥ / USD $ / EUR € / HKD HK$ / JPY ¥ / GBP £ / KRW ₩ / SGD S$ / AUD A$ / CAD C$ / TWD NT$），新版 `AmountDisplay` 固定写死 ¥ → 订阅金额、试用扣费金额都显示错币种。已在 `web/src/utils/money.ts` 新增 `currencySymbol()` / `fmtAmountWith()`，并给 `AmountDisplay` 加 `currency` prop（不传则保持原样，不影响其他页面）。
+
+**`StatCard` 新增 `raw` prop**：原组件固定用 `fmtAmount` 把 value 当「分」格式化，但「生效中订阅」「本月待扣」是**计数**，会被显示成「¥0.00」。新增 `raw` 开关走纯数字显示（其他页面不受影响，默认 `false`）。
+
+**有意偏离老版一处**：老版的「编辑」是独立页面（`/subscriptions/:id/edit`），新版沿用项目统一的**抽屉**交互；老版的「常用服务快选」在右侧表单顶部，新版放在列表下方的独立卡片里（点一下同样带出名称 / 图标 / 周期）。
+
+**验证**：`npm run build`（`vue-tsc --noEmit && vite build`）0 错误、exit 0，产物含 `SubscriptionsView-*.js`；`GetDiagnostics` 无诊断；`node --check src/routes/api.v1.subscriptions.js` 通过。
+
+**浏览器实测**（Chrome 实测，含数据往返）：
+- 4 张统计卡全部正确：生效中订阅 **1**（副标题「试用中 0 · 已暂停 0」）/ 每月固定支出 **¥45.00** / 每年合计 **¥540.00**（副标题「年付 / 半年付 0 项已按周期摊平」）/ 本月待扣 **1**（副标题「本月已扣 ¥0.00 · 最近 D5-测试订阅 2 天后」）
+- **分组**：生效中（2）/ 试用中（1）/ 已暂停（1）/ 已取消（1）各自成组
+- **月均换算**：每期 ¥90.00 的季度订阅 → 「每季 · 月均 $30.00」+「全年 $360.00」（USD 币种符号正确）
+- **币种符号**：CNY ¥45.00 / USD $90.00 / EUR €30.00 三种均正确
+- **「仅提醒」chip**：`auto_renew=0` 时显示「仅提醒」（警告色），`auto_renew=1` 显示「到期自动记账」（成功色）
+- **不周期**：「不周期 · 手动记账」+「记录型订阅：不自动扣费，需要时手动记一期」；编辑时「下次扣费日」表单项**已隐藏**
+- **固定到期日**：「固定到期日 · 到期提醒」+「到期日：2026-10-28（1 天后到期，到期只提醒不扣费）」；编辑时标签变为「**到期日**」
+- **扣费实测**：点「立即扣费一期」→ 下次扣费日 2026-10-29 → **2026-11-29**，卡片出现「上次扣费：2026-10-27」「已自动记账 1 笔」，编辑抽屉的「历史扣费记录」显示「2026-10-27 · 订阅扣费 · D5-测试订阅（标准会员）¥45.00」
+- **跳过本期**：下次扣费日 11-29 → **12-29**
+- **标记已取消**：自动移入「已取消（1）」分组，统计卡「生效中订阅」变 0、「本月已扣 ¥45.00」保留，详情行显示「已取消：2026-11-29」，按钮只剩「恢复 / 编辑 / 管理页 ↗ / 删除」
+- **恢复**：回到「生效中（1）」，统计卡恢复 ¥45.00 / ¥540.00
+- **预设快选**：点「🎬 Netflix」→ 抽屉自动带出图标 🎬 + 名称 Netflix + 周期每月
+- **状态选项**：新建时只有「生效中 / 试用中 / 已暂停」3 项；编辑已取消的订阅显示「已取消」（不显示裸值 `canceled`）
+- **审计日志**：DB 查到 `subscription.create` / `charge` / `cancel` / `toggle` 全部写入（`audit_logs` 表 `entity='subscription'`）
+- **测试数据已全部清理**：4 个测试订阅 + 1 笔测试扣费交易已删除（DB 校验 `subs=0 txns=0`），刷新后统计卡全部归零、回到空态；审计日志按设计保留
+- 控制台：0 应用级报错（仅页面刷新导致的 `net::ERR_ABORTED`）
 
 #### D1 账户管理修复（2026-10-27）
 
@@ -610,13 +723,15 @@ B1 第二轮修复（用户截图反馈后）：
 
 | 优先级 | 页面 | 理由 |
 |---|---|---|
-| P0 | A1、B1、B2、B3 | 高频入口，影响全局导航与记账闭环 |
-| P0 | F4 设置 | 老版 25KB，功能最全，最易漏 |
-| P1 | D1、D5、B6、B7 | 资产与订阅是核心能力 |
-| P1 | C1 报表 | 图表/区间逻辑复杂 |
+| P0 | A1、B1、B2、B3 | 高频入口，影响全局导航与记账闭环 ✅ 已确认 |
+| P0 | F4 设置 | 老版 25KB，功能最全，最易漏 ✅ 已确认 |
+| P1 | D1、D5、B6、B7 | 资产与订阅是核心能力 ✅ 已确认 |
+| P1 | C1 报表 | 图表/区间逻辑复杂 ← **下一项** |
 | P2 | D2~D7、E1~E4 | 常规 CRUD |
 | P2 | F1~F3、F5 | 系统页 |
 | P3 | G1~G7 | 裸页，改动相对独立 |
+
+> 尚待确认：A3（全局 CSRF，用户决策留到 C2 阶段一并处理）、C2（`/search` 白屏，同上）。
 
 ---
 
@@ -637,9 +752,11 @@ B1 第二轮修复（用户截图反馈后）：
 | 2026-10-21 | B3-4 | 用户验收反馈 4 项：明细行补消费时刻（`txn_time`，前端 `itemTime()` 早有但从未在模板使用）、编辑/删除按钮挪到金额左侧（`.act` 补 `margin-left:auto`）、`AccountDetailView` 的 `toItem` 补 `txn_time`/`tag_names`/`reimbursed_at`、后端 `GET /api/v1/accounts/:id` 补 `att.attachCounts(rows)` 恢复 📎 徽标。`npm run build` 0 错误，后端 `node --check` + 数据自检通过。**已确认** |
 | 2026-10-21 | B5 | 记账日历 9 项（详见上表）：补「本月热力分布」SVG 热力图与「本月支出 TOP 5」排行条（老版有、新版缺）、修日历格金额强制取整（`toFixed(0)` → 新增 `fmtPlain`）、补选中日当日小计与「＋ 补记」入口、标题改相对日期+星期、`TxnFormView` 补 `?date=` 预填（老版补记行为）、修星期表头非响应式真 bug、清理 9 处死代码与 1 次多余请求、视觉对齐老版 `.cal-cell`/`.cal-nav`（圆角/热力口径/空白格/hover/月标题/按钮文案）。后端 `/dashboard/calendar` 数据齐备，**无需改后端**。`npm run build` 0 错误，无诊断。**待确认** |
 | 2026-10-21 | B5-2 | 用户提供老版截图对照，改版式 8 项：整体改**左右两栏**（老版 `.grid-main` 1.6fr/1fr，左=日历+热力图、右=当日详情+支出TOP）、删 4 个 StatCard 把月汇总「支出/收入/结余」移进月导航条右侧、月导航改「‹ 标题 › + 本月」形态、补日历卡标题与提示脚注、空态改老版 📭 图标样式、栅格间距/表头字号对齐、清理 5 个失效导入、`.day-detail` 补 sticky 吸附。`npm run build` 0 错误，无诊断。**已确认** |
-| 2026-10-26 | B6 | AI 截图记账 13 项（详见上表）。**2 个隐性缺陷**：① `AiApi.scan/text/chat/confirm` 解包错误（后端返回 `{ok,data}`，前端却取 `.data`）→ **AI 页与 A1 的 AiPanel 浮窗识别结果全废**，已统一改为 `.data.data`；② `doConfirm` 硬传空 `image_ids` → 截图挂不到交易上，已回传 `r.images[].id`。**结构变更**：去掉 4 个 tab，改回老版**左右两栏**（左=上传+草稿+文字快速记账，右=识别原理+识别历史画廊）。补可编辑草稿卡、三态配置提示、拖拽/粘贴/8MB/6 张校验、识别历史画廊、识别原理卡、保存后跳明细、只读门控；`TxnFormView` 补 AI 跳转 URL 预填。**后端**：`/ai/config` 剥离 apiKey（安全）、`/ai/attachments` 补 `category_name`/`category_icon`/`url` 并过滤软删除交易。`npm run build` 0 错误，`node --check` + 真实库自检通过。**待确认** |
-| 2026-10-26 | B6-2 | 用户在控制台看到 **2 条 Vue 警告** → 定位为 `SettingsView.vue` 漏 import `NGrid` / `NGridItem`（「系统信息」tab 栅格失效，已修）+ `NTag as NTagRaw` 死代码（已移除）。顺带全站 30 路由控制台巡检：**`/search` 页白屏** —— `NDatePicker` 直接绑 `''` 字符串（naive 只收毫秒时间戳）→ `RangeError: Invalid time value` 致 setup 抛错、组件不渲染，属 C2 范围未动，已记入遗留。修复后除 `/search` 外全站控制台 0 警告。`npm run build` 0 错误。**待确认** |
+| 2026-10-26 | B6 | AI 截图记账 13 项（详见上表）。**2 个隐性缺陷**：① `AiApi.scan/text/chat/confirm` 解包错误（后端返回 `{ok,data}`，前端却取 `.data`）→ **AI 页与 A1 的 AiPanel 浮窗识别结果全废**，已统一改为 `.data.data`；② `doConfirm` 硬传空 `image_ids` → 截图挂不到交易上，已回传 `r.images[].id`。**结构变更**：去掉 4 个 tab，改回老版**左右两栏**（左=上传+草稿+文字快速记账，右=识别原理+识别历史画廊）。补可编辑草稿卡、三态配置提示、拖拽/粘贴/8MB/6 张校验、识别历史画廊、识别原理卡、保存后跳明细、只读门控；`TxnFormView` 补 AI 跳转 URL 预填。**后端**：`/ai/config` 剥离 apiKey（安全）、`/ai/attachments` 补 `category_name`/`category_icon`/`url` 并过滤软删除交易。`npm run build` 0 错误，`node --check` + 真实库自检通过。**已确认** |
+| 2026-10-26 | B6-2 | 用户在控制台看到 **2 条 Vue 警告** → 定位为 `SettingsView.vue` 漏 import `NGrid` / `NGridItem`（「系统信息」tab 栅格失效，已修）+ `NTag as NTagRaw` 死代码（已移除）。顺带全站 30 路由控制台巡检：**`/search` 页白屏** —— `NDatePicker` 直接绑 `''` 字符串（naive 只收毫秒时间戳）→ `RangeError: Invalid time value` 致 setup 抛错、组件不渲染，属 C2 范围未动，已记入遗留。修复后除 `/search` 外全站控制台 0 警告。`npm run build` 0 错误。**已确认** |
 | 2026-10-26 | B6-3 | 用户决策：`/search` 白屏**留到 C2 阶段与搜索筛选页一并修复**，本轮不动代码；根因与修法已回写进 C 组表格 C2 行的备注列，避免 C2 阶段重新排查。**待确认** |
-| 2026-10-26 | B7 | 截图库 11 项（详见上表）。新版原**完全没有此页**（`/attachments` 走 catch-all → 404），已新建 `AttachmentsView.vue` + 补路由 + 侧栏「AI」高亮映射（对齐老版 `activeNav: 'ai'`）。含：老版同款卡头计数文案 + 双「＋ 上传新截图」入口、🖼️ 空态 + 「去体验 AI 截图记账」、36 条/页分页（复用明细页固定 5 页滑动窗口）、图注三行（金额/商家/日期·KB）、`NImage` 点击放大（正向增强）、`NPopconfirm` 删除确认 + 只读门控、页码与 URL `?page=` 双向同步、删完末页自动回退。**后端**：`/ai/attachments` 补 `t.id AS linked_txn_id`（JOIN 加 `deleted_at IS NULL`）→ 关联交易软删时不再给出死链「查看记录」。**遗留**：`data/uploads` 磁盘文件已被清空（既有数据状态，非代码缺陷），页面图片 404，重新上传即可恢复。`npm run build` 0 错误，`node --check` + 真实库自检 + 浏览器实测通过。**待确认** |
+| 2026-10-26 | B7 | 截图库 11 项（详见上表）。新版原**完全没有此页**（`/attachments` 走 catch-all → 404），已新建 `AttachmentsView.vue` + 补路由 + 侧栏「AI」高亮映射（对齐老版 `activeNav: 'ai'`）。含：老版同款卡头计数文案 + 双「＋ 上传新截图」入口、🖼️ 空态 + 「去体验 AI 截图记账」、36 条/页分页（复用明细页固定 5 页滑动窗口）、图注三行（金额/商家/日期·KB）、`NImage` 点击放大（正向增强）、`NPopconfirm` 删除确认 + 只读门控、页码与 URL `?page=` 双向同步、删完末页自动回退。**后端**：`/ai/attachments` 补 `t.id AS linked_txn_id`（JOIN 加 `deleted_at IS NULL`）→ 关联交易软删时不再给出死链「查看记录」。**遗留**：`data/uploads` 磁盘文件已被清空（既有数据状态，非代码缺陷），页面图片 404，重新上传即可恢复。`npm run build` 0 错误，`node --check` + 真实库自检 + 浏览器实测通过。**已确认** |
 | 2026-10-27 | F4 | 设置页按老版 `settings.ejs`（429 行 / 6 个锚点 tab）**全量重写** `SettingsView.vue`，tab 结构**回归老版 6 个**（账号安全 / AI 记账 / 开放 API / 站点设置 / 系统管理 / 运行信息，tab 名与老 hash 锚点一一对应）。**4 个隐性缺陷**：① 后端 `GET /settings` 不返回 `user` → 个人资料 4 项全空（已补白名单字段）；② AI 保存发 camelCase 而后端读 `ai.*` → **配好的 AI 一保存全被清空**（已改字段名，实测保存前后 cfg 完全一致）；③ API Key 明文下发并回填输入框（已改 `hasApiKey` 布尔 + Key 不回填 + 清除勾选，`settings` 全量键值里也删掉 `ai.api_key`）；④ 用户管理只有只读表格、4 个操作按钮全缺（已补，并接上后端 reset/delete 的确认框与新密码提示）。**3 个运行时缺陷**：⑤ naive-ui 2.45.3 下自闭合 `NTabPane` **tab 标题渲染为空**（改用 `NTab`）；⑥ `NCode` 因未装 hljs 报控制台错误（改原生 `<code>`）；⑦ `listAiModels`/`runScheduler`/`changePassword` **响应解包层级错**（`r.models`→`r.data.models`、`r.message`→`r.data.message`）。**功能补齐约 20 项**，老版 6 个 hash 锚点全部兼容。**备份与恢复按老版位置迁到「导出备份」页**（老版在 `export.ejs` 而非设置页）：新增「💾 数据库文件备份」+「♻️ 从备份恢复」两卡。**顺带修后端缺陷**：`GET /api/v1/session` 漏补 `isAdmin` 别名（DB 原始行是 `is_admin`）→ 依赖它的管理员判断全部失真，已在 `apiV1.js` 补齐。**用户反馈二次调整**：tab 数从 11 个回归 6 个；AI 记账表单提示语改到输入框下一行（naive `NFormItem` 的 blank 是横向 flex，已加 `.ai-stack` 列布局）。`npm run build` 0 错误，`node --check` + 浏览器实测通过，控制台 0 应用级报错。**遗留**：`MembersView` 同款 `NCode` 告警待 F2 处理；「立即执行一次检查 / 恢复备份 / 重置密码」三个会改真实数据的按钮未点确认。**已确认** |
-| 2026-10-27 | D1 | 账户管理按老版 `accounts.ejs`（183 行）重写 `AccountsView.vue` + 补 `api.v1.accounts.js` 归档字段。**5 个隐性缺陷**：① 前端判 `a.flow?.in` 但后端字段是 `flow.out`/`flow.inflow`（**无 `flow.in`**）→ **近 30 天流水永不显示**（已改老版口径「近30天 −out / +inflow」并移到金额右侧）；② 总负债多套一层 `-Math.abs()` → **显示成负数**（老版是正数，已去掉）；③ 账户副行（币种·尾号·账单日·还款日）**全丢**（已补 `accountMeta()`）；④ 分组用 `Object.keys().sort()` → **字母序**，老版是 `ACCOUNT_TYPES` 定义顺序（已改）；⑤ 后端 `archived` 未补 `flow`/`typeLabel`/`isLiability`（已补）。**14 项功能补齐**：统计卡 3 条 hint 副标题、净资产负数标红、「共 N 个在用账户，M 个已停用」+「＋ 添加账户」、每组卡头「合计 ¥X」、行内补**「明细」**和**「余额调整」**两个操作（老版有、新版缺）、账户行改上下两行且操作按钮**常显**（原 `display:none` 靠 hover，移动端点不到）、负债类账户余额也标红、币种补齐 7 种（缺 GBP/SGD）且默认取站点本位币、额度/账单日/还款日**去掉 credit 条件**（老版无条件显示）、空态与已停用卡文案回老版、删除确认文案回老版。**术语统一**为老版「停用」。**后端**：`GET /accounts` 的 archived 补 3 字段。`npm run build` 0 错误，`node --check` + 浏览器实测（含创建外币账户→编辑存账期→余额调整→停用→删除拦截→**测试数据已清理**）通过。**遗留**：`AccountDetailView`（D2）余额调整提示语 `r.delta` 应为 `r.data.delta`，留待 D2。**待确认** |
+| 2026-10-27 | D5 | 订阅扣费按老版 `subscriptions.ejs`（307 行）+ `routes/subscriptions.js`（222 行）重写 `SubscriptionsView.vue`，补 `api.v1.subscriptions.js` 的 JOIN 与审计。**2 个隐性缺陷**：① **3 张统计卡全部为 0** —— 前端读 `overview.monthly`/`yearly`/`activeCount`，后端 `subs.overview()` 实际返回 `monthlyTotal`/`annualTotal`/`live[]`，**字段名全不匹配**（已全部改正，卡片从 3 张补成老版 4 张：生效中订阅/每月固定支出/每年合计/本月待扣·已扣）；② `GET /subscriptions` 未 JOIN accounts/categories → **卡片上「支付账户」永远为空**（已补 LEFT JOIN + `charge_count`）。**16 项功能补齐**：顶部说明卡、按状态分 4 组（生效中/试用中/已暂停/已取消，各带数量）、卡片 chips 补「到期自动记账·仅提醒」+「试用至 X」、金额右侧补「**周期 · 月均 ¥X**」换算、详情行补「上次扣费/分类/已自动记账 N 笔/全年 ¥X」+ 到期标签、3 天内到期标红、备注行、**「管理页 ↗」外链**、按钮文案回老版（立即扣费一期/跳过本期/标记已取消）、**历史扣费记录**卡、表单补币种/管理页地址、周期补齐 7 种（缺每季每半年）、周期联动（不周期隐藏下次扣费日 + 固定到期日改标签「到期日」）、状态只 3 项（已取消的编辑时不复活）。**后端补 5 条审计日志**（update/charge/toggle/cancel/delete，老版全有、新版全无）。**跨页面增强**：`money.ts` 新增 `currencySymbol`/`fmtAmountWith`，`AmountDisplay` 加 `currency` prop（订阅的 USD/EUR 金额原来被硬编码成 ¥），`StatCard` 加 `raw` prop（计数类指标不再被当「分」格式化）。`npm run build` 0 错误，`node --check` + 浏览器实测通过（含创建/扣费/跳过/取消/恢复全链路 + 审计日志 DB 校验 + **测试数据已清理**）。**已确认** |
+| 2026-10-27 | D1 | 账户管理按老版 `accounts.ejs`（183 行）重写 `AccountsView.vue` + 补 `api.v1.accounts.js` 归档字段。**5 个隐性缺陷**：① 前端判 `a.flow?.in` 但后端字段是 `flow.out`/`flow.inflow`（**无 `flow.in`**）→ **近 30 天流水永不显示**（已改老版口径「近30天 −out / +inflow」并移到金额右侧）；② 总负债多套一层 `-Math.abs()` → **显示成负数**（老版是正数，已去掉）；③ 账户副行（币种·尾号·账单日·还款日）**全丢**（已补 `accountMeta()`）；④ 分组用 `Object.keys().sort()` → **字母序**，老版是 `ACCOUNT_TYPES` 定义顺序（已改）；⑤ 后端 `archived` 未补 `flow`/`typeLabel`/`isLiability`（已补）。**14 项功能补齐**：统计卡 3 条 hint 副标题、净资产负数标红、「共 N 个在用账户，M 个已停用」+「＋ 添加账户」、每组卡头「合计 ¥X」、行内补**「明细」**和**「余额调整」**两个操作（老版有、新版缺）、账户行改上下两行且操作按钮**常显**（原 `display:none` 靠 hover，移动端点不到）、负债类账户余额也标红、币种补齐 7 种（缺 GBP/SGD）且默认取站点本位币、额度/账单日/还款日**去掉 credit 条件**（老版无条件显示）、空态与已停用卡文案回老版、删除确认文案回老版。**术语统一**为老版「停用」。**后端**：`GET /accounts` 的 archived 补 3 字段。`npm run build` 0 错误，`node --check` + 浏览器实测（含创建外币账户→编辑存账期→余额调整→停用→删除拦截→**测试数据已清理**）通过。**遗留**：`AccountDetailView`（D2）余额调整提示语 `r.delta` 应为 `r.data.delta`，留待 D2。**已确认** |
+| 2026-10-28 | B6-4 | **修复「AI 识别丢失消费时刻」**（用户全程旁观实测发现：识别时忽略时间、没存库、后续操作全看不到具体时间）。`txn_time` 字段在 B1 阶段已建好，但 **AI 识别这条链路从未碰过它**，共 **5 处断点**：① `SYSTEM_PROMPT` 根本没要求输出时刻（补第 5 条要求 + 输出格式示例加 `txn_time`）；② `normalizeItem` 丢弃模型输出的时刻（新增 `normalizeTime()` 归一化 `HH:mm`，兼容 `12：30`/`12:30:05`/`8:05`，非法值归空）；③ 规则引擎 `parseTextByRules` 不抽时间（新增 `extractTime()`，支持 `12:30`/`12点30分`/`下午3点`+12/`凌晨12点`→00:00）；④ `POST /ai/confirm` 与 `POST /ai/chat` 入库都漏传 `txn_time`（两处都补）；⑤ 前端 `AiView.vue` 无处可改无处可传（`Draft` 补字段 + 草稿卡新增「时刻」`NTimePicker` + `buildItems` 带时刻 + **文字快速记账单笔跳转 query 补 `txn_time`**）。**连带修 2 处**：`TxnFormView.vue` 解析 `route.query` 时没读 `txn_time`（AI 文字记账跳过来时表单时刻为空）；`NTimePicker` 去掉与 `value` 混用的 `formatted-value`。**验证**：`npm run build` 0 错误、`node --check` 通过、解析逻辑 14 组用例全对、入库/读取链路自检通过；**浏览器端到端实测**（临时在 5112 端口起独立实例，不触碰用户正在运行的 5111，测完已停掉）：文字记账「午饭 35 支付宝 12:30」→ 跳转带 `txn_time=12:30` → 表单预填 `12:30:00` → 入库 `12:30:00` → 列表/详情均显示时刻；截图识别含 `12:45` 的收据 → 草稿卡时刻自动预填 `12:45` → 入库 `12:45:00` → 列表显示 `12:45:00`。**测试数据已清理**（交易回到 2710、附件回到 4）。**注意**：后端进程未带 `--watch`，用户需重启 5111 才会加载本次后端改动。**已确认** |

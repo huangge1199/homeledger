@@ -276,6 +276,29 @@ function extractAmount(text) {
   return parseAmountToCents(nums.sort((a, b) => Number(b) - Number(a))[0]);
 }
 
+/** 从一行文本里抽时刻（HH:mm），没有则返回 '' */
+function extractTime(text) {
+  const s = String(text || '');
+  // 明确带分隔符的：12:30 / 12：30 / 12:30:05
+  let m = s.match(/(\d{1,2})\s*[:：]\s*(\d{1,2})(?:\s*[:：]\s*(\d{1,2}))?/);
+  if (m) {
+    const hh = Number(m[1]);
+    const mm = Number(m[2]);
+    if (hh <= 23 && mm <= 59) return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
+  }
+  // 「12点30分」「下午3点」
+  m = s.match(/(\d{1,2})\s*[点时]\s*(?:(\d{1,2})\s*分?)?/);
+  if (m) {
+    let hh = Number(m[1]);
+    const mm = Number(m[2] || 0);
+    if (/下午|晚上|傍晚|夜里/.test(s) && hh < 12) hh += 12;
+    if (/凌晨|早上|上午|清晨/.test(s) && hh === 12) hh = 0;
+    if (hh <= 23 && mm <= 59) return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
+  }
+  // 「中午12点」→ 12:00；「早上8点」→ 08:00
+  return '';
+}
+
 /** 规则引擎：纯文本 → 账单草稿数组 */
 function parseTextByRules(text, { today = todayStr() } = {}) {
   const lines = String(text || '')
@@ -293,6 +316,7 @@ function parseTextByRules(text, { today = todayStr() } = {}) {
       amount_cents: amount,
       currency: 'CNY',
       txn_date: parseDateWords(line, today),
+      txn_time: extractTime(line),
       merchant: cleanMerchant(line),
       note: line.slice(0, 120),
       category_name: cls?.category || null,
@@ -410,12 +434,13 @@ const SYSTEM_PROMPT = `你是一个专业的记账助手，负责把「账单截
 2. 一张截图里可能包含多笔交易（例如账单列表），必须逐笔提取。
 3. 金额一律为数字（元），不要带货币符号；支出/付款为正常正数。
 4. 日期格式 YYYY-MM-DD；若截图只有月日则补齐为今年；无法确定则用今天。
-5. type 只能取：expense（支出）、income（收入）、transfer（转账）。
-6. category_name 必须从给定的分类列表中选择最贴近的「完整路径」，若都不合适则选「其他支出/其他」这类兜底项。
-7. 若能识别出付款方式，acct 填对应账户名。
-8. confidence 为 0~1 的小数，表示你对这笔提取的把握。
+5. 时刻格式 HH:mm（24 小时制，如 "12:30"）。截图里能看到具体消费时刻就填，**看不到就留空字符串**，不要编造。
+6. type 只能取：expense（支出）、income（收入）、transfer（转账）。
+7. category_name 必须从给定的分类列表中选择最贴近的「完整路径」，若都不合适则选「其他支出/其他」这类兜底项。
+8. 若能识别出付款方式，acct 填对应账户名。
+9. confidence 为 0~1 的小数，表示你对这笔提取的把握。
 输出格式：
-{"items":[{"type":"expense","amount":35.00,"txn_date":"2026-09-15","merchant":"肯德基","note":"午餐","category_name":"餐饮/午餐","acct":"支付宝","currency":"CNY","confidence":0.95}]}`;
+{"items":[{"type":"expense","amount":35.00,"txn_date":"2026-09-15","txn_time":"12:30","merchant":"肯德基","note":"午餐","category_name":"餐饮/午餐","acct":"支付宝","currency":"CNY","confidence":0.95}]}`;
 
 function buildUserPrompt({ text, ctx, today }) {
   return [
@@ -479,6 +504,29 @@ function resolveAccountId(ledgerId, nameHint) {
   return null;
 }
 
+/** 规范化模型/规则输出的时刻：统一成 HH:mm，非法或缺失返回 '' */
+function normalizeTime(raw) {
+  const s = String(raw || '').trim();
+  if (!s) return '';
+  let m = s.match(/^(\d{1,2})\s*[:：]\s*(\d{1,2})(?:\s*[:：]\s*(\d{1,2}))?/);
+  if (m) {
+    const hh = Number(m[1]);
+    const mm = Number(m[2]);
+    if (hh <= 23 && mm <= 59) return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
+    return '';
+  }
+  // 「12点30」「下午3点」这类只在规则引擎里出现
+  m = s.match(/(\d{1,2})\s*[点时]\s*(?:(\d{1,2})\s*分?)?/);
+  if (m) {
+    let hh = Number(m[1]);
+    const mm = Number(m[2] || 0);
+    if (/下午|晚上|傍晚|夜里/.test(s) && hh < 12) hh += 12;
+    if (/凌晨|早上|上午|清晨/.test(s) && hh === 12) hh = 0;
+    if (hh <= 23 && mm <= 59) return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
+  }
+  return '';
+}
+
 /** 规范化单条草稿 */
 function normalizeItem(raw, ledgerId) {
   const type = ['expense', 'income', 'transfer'].includes(raw.type) ? raw.type : 'expense';
@@ -499,6 +547,7 @@ function normalizeItem(raw, ledgerId) {
     amount_cents: Math.abs(amountCents || 0),
     currency: raw.currency || 'CNY',
     txn_date: /^\d{4}-\d{2}-\d{2}$/.test(String(raw.txn_date || '')) ? raw.txn_date : todayStr(),
+    txn_time: normalizeTime(raw.txn_time || raw.time),
     merchant: raw.merchant ? String(raw.merchant).slice(0, 60) : null,
     note: raw.note ? String(raw.note).slice(0, 200) : null,
     category_id: categoryId,

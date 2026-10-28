@@ -13,13 +13,16 @@ interface Props {
   delta?: number | null
   /** 是否反转 delta 颜色（支出涨=坏） */
   reverseDelta?: boolean
+  /** value 是否已是最终数值（计数类指标，不按「分」格式化） */
+  raw?: boolean
 }
 const props = withDefaults(defineProps<Props>(), {
   tone: 'neutral',
   reverseDelta: false,
+  raw: false,
 })
 
-const valueText = computed(() => fmtAmount(props.value ?? 0))
+const valueText = computed(() => (props.raw ? String(props.value ?? 0) : fmtAmount(props.value ?? 0)))
 
 const valueColor = computed(() => {
   if (props.tone === 'income') return 'var(--hl-income, #12a150)'

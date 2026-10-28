@@ -14,7 +14,7 @@ import { useRouter, RouterLink } from 'vue-router'
 import dayjs from 'dayjs'
 import {
   NCard, NButton, NText, NTag, NInput, NInputNumber, NSelect, NAlert,
-  NImage,
+  NImage, NTimePicker,
 } from 'naive-ui'
 
 import AppShell from '@/layouts/AppShell.vue'
@@ -143,6 +143,8 @@ interface Draft {
   type: string
   amount: number | null
   txn_date: string
+  /** 消费时刻 HH:mm:ss，可空（后端 txn_time 字段） */
+  txn_time: string
   category_id: number | null
   account_id: number | null
   note: string
@@ -177,12 +179,38 @@ function toDraft(it: any): Draft {
     type: it.type || 'expense',
     amount: Math.round(Number(it.amount_cents || 0)) / 100,
     txn_date: it.txn_date || dayjs().format('YYYY-MM-DD'),
+    txn_time: normalizeTimeText(it.txn_time),
     category_id: it.category_id ? Number(it.category_id) : null,
     account_id: it.account_id ? Number(it.account_id) : null,
     note,
     confidence: Number(it.confidence || 0),
     raw: it.raw || it,
   }
+}
+
+/** 后端时刻统一成 HH:mm:ss（可空）；前端用 HH:mm 展示，入库时补秒 */
+function normalizeTimeText(v: any): string {
+  const s = String(v || '').trim()
+  if (!s) return ''
+  const m = s.match(/^(\d{1,2})\s*[:：]\s*(\d{1,2})(?:\s*[:：]\s*(\d{1,2}))?/)
+  if (!m) return ''
+  const hh = Number(m[1]); const mm = Number(m[2]); const ss = Number(m[3] || 0)
+  if (hh > 23 || mm > 59 || ss > 59) return ''
+  return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}`
+}
+
+/** HH:mm:ss → 当天 2000-01-01 的毫秒时间戳（NTimePicker 需要毫秒） */
+function timeToMs(t: string): number | null {
+  if (!t) return null
+  const m = t.match(/^(\d{1,2}):(\d{2})/)
+  if (!m) return null
+  return dayjs(`2000-01-01T00:00:00`).hour(Number(m[1])).minute(Number(m[2])).second(0).valueOf()
+}
+
+/** NTimePicker 的毫秒时间戳 → HH:mm:ss */
+function msToTime(v: number | null): string {
+  if (!v) return ''
+  return dayjs(v).format('HH:mm:ss')
 }
 
 function confClass(c: number) {
@@ -229,6 +257,7 @@ function buildItems() {
     type: d.type,
     amount_cents: Math.round(Number(d.amount || 0) * 100),
     txn_date: d.txn_date,
+    txn_time: d.txn_time || '',
     category_id: d.type === 'transfer' ? null : d.category_id,
     account_id: d.account_id,
     note: d.note,
@@ -336,6 +365,7 @@ async function doQuickText() {
       }
       if (s.category_id) q.category_id = String(s.category_id)
       if (s.account_id) q.account_id = String(s.account_id)
+      if (s.txn_time) q.txn_time = s.txn_time
       router.push({ path: '/transactions/new', query: q })
       return
     }
@@ -516,6 +546,16 @@ onBeforeUnmount(() => {
               <div class="field">
                 <label>日期</label>
                 <DatePickerWrap v-model="d.txn_date" />
+              </div>
+              <div class="field">
+                <label>时刻</label>
+                <NTimePicker
+                  :value="timeToMs(d.txn_time)"
+                  format="HH:mm"
+                  :clearable="true"
+                  placeholder="可选"
+                  @update:value="(v: number | null) => (d.txn_time = msToTime(v))"
+                />
               </div>
               <div class="field">
                 <label>类型</label>

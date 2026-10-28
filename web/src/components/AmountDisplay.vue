@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { fmtAmount } from '@/utils/money'
+import { fmtAmount, fmtAmountWith } from '@/utils/money'
 
 interface Props {
   cents: number | null | undefined
@@ -10,14 +10,19 @@ interface Props {
   tone?: 'income' | 'expense' | 'neutral' | 'auto'
   /** 小一号字号 */
   small?: boolean
+  /** 币种代码（CNY/USD/...）；不传则固定用 ¥ */
+  currency?: string | null
 }
 const props = withDefaults(defineProps<Props>(), {
   sign: false,
   tone: 'auto',
   small: false,
+  currency: null,
 })
 
-const text = computed(() => fmtAmount(props.cents ?? 0, props.sign))
+const text = computed(() =>
+  props.currency ? fmtAmountWith(props.cents ?? 0, props.currency, props.sign) : fmtAmount(props.cents ?? 0, props.sign)
+)
 const color = computed(() => {
   const t = props.tone === 'auto' ? (Number(props.cents) >= 0 ? 'income' : 'expense') : props.tone
   if (t === 'income') return 'var(--hl-income, #12a150)'

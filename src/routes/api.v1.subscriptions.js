@@ -69,8 +69,17 @@ router.get('/', auth.requireLogin, api.asyncHandler((req, res) => {
   if (!ledger) return api.ok(res, { items: [], overview: {}, presets: PRESETS });
   const ledgerId = Number(ledger.id);
   const sums = subs.overview(ledgerId);
-  const items = require('../db').all('SELECT * FROM subscriptions WHERE ledger_id = ? ORDER BY status, next_charge_at', ledgerId)
-    .map((row) => subs.decorate(row));
+  // 列表直接 JOIN 出账户名 / 分类名（含分类图标），与老版列表页展示口径一致
+  const items = require('../db').all(
+    `SELECT s.*, a.name AS account_name, c.name AS category_name, c.icon AS category_icon
+     FROM subscriptions s
+     LEFT JOIN accounts a ON a.id = s.account_id
+     LEFT JOIN categories c ON c.id = s.category_id
+     WHERE s.ledger_id = ?
+     ORDER BY CASE s.status WHEN 'active' THEN 0 WHEN 'trial' THEN 1 WHEN 'paused' THEN 2 ELSE 3 END,
+              s.next_charge_at, s.id`,
+    ledgerId
+  ).map((row) => subs.decorate(row, { charge_count: Number(row.charge_count) || 0 }));
   api.ok(res, { items, overview: sums, presets: PRESETS });
 }));
 
@@ -115,6 +124,7 @@ router.put('/:id(\\d+)', auth.requireLogin, auth.requireLedgerWrite, api.asyncHa
     d.anchor_month, d.anchor_day, d.account_id, d.category_id, d.auto_renew, d.trial_ends_on, d.next_charge_at,
     d.reminder_days, d.status, d.note, id, ledgerId
   );
+  auth.audit(req, 'subscription.update', { entity: 'subscription', entityId: id, ledgerId, detail: d.name });
   api.saved(res, '订阅已更新');
 }));
 
@@ -125,6 +135,7 @@ router.post('/:id(\\d+)/charge', auth.requireLogin, auth.requireLedgerWrite, api
   if (sub.status === 'canceled') return api.badRequest(res, '该订阅已取消，请先恢复');
   const txnId = subs.charge(sub, req.session.userId, { date: DAY_RE.test(String(req.body.date || '')) ? req.body.date : todayStr() });
   if (!txnId) return api.badRequest(res, '订阅金额为 0，无法记账');
+  auth.audit(req, 'subscription.charge', { entity: 'subscription', entityId: sub.id, ledgerId, detail: String(sub.amount_cents) });
   api.created(res, { txn_id: txnId });
 }));
 
@@ -142,8 +153,11 @@ router.post('/:id(\\d+)/toggle', auth.requireLogin, auth.requireLedgerWrite, api
   const sub = get('SELECT * FROM subscriptions WHERE id = ? AND ledger_id = ?', Number(req.params.id), ledgerId);
   if (!sub) return api.notFound(res, '订阅不存在');
   const back = sub.status === 'paused' || sub.status === 'canceled';
-  run('UPDATE subscriptions SET status = ?, canceled_at = ? WHERE id = ?',
-    back ? 'active' : 'paused', back ? null : sub.canceled_at, sub.id);
+  run(
+    'UPDATE subscriptions SET status = ?, canceled_at = ? WHERE id = ?',
+    back ? 'active' : 'paused', back ? null : sub.canceled_at, sub.id
+  );
+  auth.audit(req, 'subscription.toggle', { entity: 'subscription', entityId: sub.id, ledgerId, detail: sub.name });
   api.ok(res, { status: back ? 'active' : 'paused' });
 }));
 
@@ -152,6 +166,7 @@ router.post('/:id(\\d+)/cancel', auth.requireLogin, auth.requireLedgerWrite, api
   const sub = get('SELECT * FROM subscriptions WHERE id = ? AND ledger_id = ?', Number(req.params.id), ledgerId);
   if (!sub) return api.notFound(res, '订阅不存在');
   run("UPDATE subscriptions SET status = 'canceled', canceled_at = ? WHERE id = ?", nowStr(), sub.id);
+  auth.audit(req, 'subscription.cancel', { entity: 'subscription', entityId: sub.id, ledgerId, detail: sub.name });
   api.ok(res, { status: 'canceled' });
 }));
 
@@ -160,6 +175,7 @@ router.delete('/:id(\\d+)', auth.requireLogin, auth.requireLedgerWrite, api.asyn
   const sub = get('SELECT * FROM subscriptions WHERE id = ? AND ledger_id = ?', Number(req.params.id), ledgerId);
   if (!sub) return api.notFound(res, '订阅不存在');
   run('DELETE FROM subscriptions WHERE id = ? AND ledger_id = ?', sub.id, ledgerId);
+  auth.audit(req, 'subscription.delete', { entity: 'subscription', entityId: sub.id, ledgerId, detail: sub.name });
   api.deleted(res, '订阅已删除');
 }));
 
