@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed, h, onMounted, ref, watch } from 'vue'
 import {
-  NCard, NButton, NSpace, NText, NTag, NInput, NForm, NFormItem, NSelect, NInputNumber,
-  NPopconfirm, NDrawer, NDrawerContent, NDivider, NAlert, NSpin, NGrid, NGridItem,
-  NSwitch, useMessage, NDatePicker,
+  NCard, NButton, NSpace, NText, NTag, NInput, NForm, NFormItem, NSelect,
+  NPopconfirm, NDrawer, NDrawerContent, NSpin, NAlert,
+  NSwitch, NDatePicker, useMessage,
 } from 'naive-ui'
 import dayjs from 'dayjs'
 import AppShell from '@/layouts/AppShell.vue'
@@ -14,7 +14,6 @@ import { RecurringApi, TransactionsApi } from '@/api/modules'
 import { errorMessage } from '@/api/client'
 import { useFlash } from '@/composables/useFlash'
 import { useSessionStore } from '@/stores/session'
-import { TXN_TYPES, TXN_TYPE_MAP, kindOf, flowOf } from '@/utils/txnTypes'
 
 const session = useSessionStore()
 const { success, error: toastError } = useFlash()
@@ -38,17 +37,13 @@ function emptyForm() {
     type: 'expense',
     amount: '',
     account_id: 0,
-    to_account_id: 0,
     category_id: 0,
     frequency: 'monthly',
-    interval_n: 1,
-    day_of_month: 1,
-    weekday: 1,
     next_run_at: dayjs().valueOf(),
-    note: '',
     merchant: '',
+    note: '',
     is_active: true,
-    auto_post: false,
+    auto_post: true,
   }
 }
 
@@ -79,7 +74,10 @@ onMounted(async () => {
 })
 watch(() => session.currentLedger?.id, load)
 
-const typeOptions = TXN_TYPES.map((t) => ({ label: `${t.icon} ${t.label}`, value: t.key }))
+const typeOptions = [
+  { label: '支出', value: 'expense' },
+  { label: '收入', value: 'income' },
+]
 const cadenceOptions = [
   { label: '每月', value: 'monthly' },
   { label: '每周', value: 'weekly' },
@@ -90,8 +88,10 @@ const accountOptions = computed(() => [
   ...accounts.value.map((a: any) => ({ label: `${a.icon} ${a.name}`, value: a.id })),
 ])
 const categoryOptions = computed(() => {
-  const k = kindOf(form.value.type)
-  return categories.value.filter((c: any) => c.kind === k).map((c: any) => ({ label: `${c.icon} ${c.name}`, value: c.id }))
+  const wantIncome = form.value.type === 'income'
+  return categories.value
+    .filter((c: any) => wantIncome ? c.kind === 'income' : c.kind === 'expense')
+    .map((c: any) => ({ label: `${c.icon} ${c.path || c.name}`, value: c.id }))
 })
 
 function openCreate() {
@@ -103,19 +103,15 @@ function openCreate() {
 function openEdit(b: any) {
   editing.value = b
   form.value = {
-    name: b.name || b.note || b.merchant || '',
-    type: b.type,
+    name: b.name || '',
+    type: b.type === 'income' ? 'income' : 'expense',
     amount: (Number(b.amount_cents) / 100).toFixed(2),
     account_id: b.account_id || 0,
-    to_account_id: b.to_account_id || 0,
     category_id: b.category_id || 0,
     frequency: b.frequency || 'monthly',
-    interval_n: b.interval_n || 1,
-    day_of_month: b.day_of_month || 1,
-    weekday: b.weekday ?? 1,
     next_run_at: b.next_run_at ? dayjs(b.next_run_at).valueOf() : dayjs().valueOf(),
-    note: b.note || '',
     merchant: b.merchant || '',
+    note: b.note || '',
     is_active: !!b.is_active,
     auto_post: !!b.auto_post,
   }
@@ -134,15 +130,11 @@ async function onSubmit() {
       type: form.value.type,
       amount: form.value.amount,
       account_id: form.value.account_id,
-      to_account_id: form.value.to_account_id || null,
       category_id: form.value.category_id || null,
       frequency: form.value.frequency,
-      interval_n: form.value.interval_n,
-      day_of_month: form.value.frequency === 'monthly' ? form.value.day_of_month : null,
-      weekday: form.value.frequency === 'weekly' ? form.value.weekday : null,
       next_run_at: dayjs(form.value.next_run_at).format('YYYY-MM-DD'),
-      note: form.value.note,
-      merchant: form.value.merchant,
+      merchant: form.value.merchant || null,
+      note: form.value.note || null,
       is_active: form.value.is_active ? 1 : 0,
       auto_post: form.value.auto_post ? 1 : 0,
     }
@@ -196,20 +188,24 @@ const cadenceLabel: Record<string, string> = {
 
 <template>
   <AppShell>
-    <PageHead title="周期账单" sub="按月/周/年/自定义周期自动入账或提醒">
+    <PageHead title="周期账单" sub="适合房租、工资、会员订阅等固定收支">
       <template #actions>
-        <NButton type="primary" @click="openCreate">＋ 新建规则</NButton>
+        <NButton type="primary" @click="openCreate">＋ 新建周期</NButton>
       </template>
     </PageHead>
+
+    <NAlert type="info" :bordered="false" class="notice">
+      周期账单适合房租、工资、会员订阅、房贷等固定收支。开启「自动记账」后，到期当天系统会自动生成记录；关闭则只提醒你手动确认。
+    </NAlert>
 
     <NSpin :show="loading">
       <Empty
         v-if="!loading && !items.length"
         icon="🔁"
-        title="还没有周期规则"
-        description="订阅、房租、贷款、保险等都可设为周期账单"
+        title="还没有周期账单"
+        description="在右侧添加，例如「每月 1 号 房租 3500」"
       >
-        <NButton type="primary" @click="openCreate">＋ 新建规则</NButton>
+        <NButton type="primary" @click="openCreate">＋ 新建周期</NButton>
       </Empty>
 
       <div v-else class="grid">
@@ -222,30 +218,35 @@ const cadenceLabel: Record<string, string> = {
         >
           <template #header>
             <div class="head">
-              <span class="ico">{{ TXN_TYPE_MAP[b.type]?.icon || '·' }}</span>
               <div class="meta">
                 <div class="title">
-                  {{ b.note || TXN_TYPE_MAP[b.type]?.label || '周期账单' }}
-                  <NTag v-if="b.merchant" size="tiny" :bordered="false" type="default">{{ b.merchant }}</NTag>
+                  {{ b.name }}
+                  <NTag v-if="!b.is_active" type="warning" size="small" :bordered="false">已暂停</NTag>
+                  <NTag v-if="b.auto_post" type="success" size="small" :bordered="false">自动记账</NTag>
+                  <NTag v-else type="info" size="small" :bordered="false">仅提醒</NTag>
                 </div>
                 <div class="sub">
-                  <span>{{ cadenceLabel[b.frequency] || b.frequency }}<span v-if="b.interval_n > 1"> · {{ b.interval_n }} 期</span></span>
-                  <span v-if="b.category_name" class="dot">·</span>
-                  <span v-if="b.category_name">{{ b.category_icon }} {{ b.category_name }}</span>
-                  <span class="dot">·</span>
-                  <span>{{ b.account_name }}</span>
+                  <span>{{ cadenceLabel[b.frequency] || b.frequency }}<span v-if="Number(b.interval_n) > 1">（每 {{ b.interval_n }} 期）</span></span>
+                  <span>· 下次执行 <b class="strong">{{ b.next_run_at }}</b></span>
+                  <template v-if="b.last_run_at"> · 上次 {{ b.last_run_at }}</template>
                 </div>
               </div>
-              <div class="amount" :class="[flowOf(b.type) === 'in' ? 'income' : 'expense']">
-                <AmountDisplay :cents="b.amount_cents" :sign="flowOf(b.type) !== 'move'" :tone="flowOf(b.type) === 'in' ? 'income' : flowOf(b.type) === 'out' ? 'expense' : 'neutral'" />
+              <div class="right">
+                <AmountDisplay
+                  class="amount"
+                  :cents="b.amount_cents"
+                  :sign="true"
+                  :tone="b.type === 'income' ? 'income' : 'expense'"
+                />
+                <div class="tiny muted">1 项</div>
               </div>
             </div>
           </template>
           <template #header-extra>
             <NSpace size="small">
-              <NButton size="tiny" quaternary @click="onRun(b)">补登</NButton>
+              <NButton size="tiny" type="primary" quaternary @click="onRun(b)">立即记一笔</NButton>
               <NButton size="tiny" quaternary @click="onToggle(b)">
-                {{ b.is_active ? '停用' : '启用' }}
+                {{ b.is_active ? '暂停' : '启用' }}
               </NButton>
               <NButton size="tiny" quaternary @click="openEdit(b)">编辑</NButton>
               <NPopconfirm
@@ -256,30 +257,23 @@ const cadenceLabel: Record<string, string> = {
                 <template #trigger>
                   <NButton size="tiny" quaternary type="error">删除</NButton>
                 </template>
-                确定删除？
+                确定删除「{{ b.name }}」？
               </NPopconfirm>
             </NSpace>
           </template>
-          <div class="footer">
-            <NTag :type="b.is_active ? 'success' : 'default'" size="small" :bordered="false">
-              {{ b.is_active ? '启用中' : '已停用' }}
-            </NTag>
-            <NTag v-if="b.auto_post" type="info" size="small" :bordered="false">自动入账</NTag>
-            <NText depth="3" class="anchor">下次执行：{{ b.next_run_at }}</NText>
-          </div>
         </NCard>
       </div>
     </NSpin>
 
     <!-- 抽屉 -->
     <NDrawer v-model:show="drawerOpen" :width="440" placement="right">
-      <NDrawerContent :title="editing ? '编辑周期规则' : '新建周期规则'" :native-scrollbar="false">
+      <NDrawerContent :title="editing ? '编辑周期账单' : '新建周期账单'" :native-scrollbar="false">
         <NForm label-placement="top" :model="form">
           <NFormItem label="名称" required>
-            <NInput v-model:value="form.name" maxlength="60" placeholder="如：房租、网费" />
+            <NInput v-model:value="form.name" maxlength="60" placeholder="例如：房租" />
           </NFormItem>
-          <NFormItem label="类型">
-            <NSelect v-model:value="form.type" :options="typeOptions" :disabled="!!editing" />
+          <NFormItem label="统计对象">
+            <NSelect v-model:value="form.type" :options="typeOptions" />
           </NFormItem>
           <NFormItem label="金额" required>
             <NInput v-model:value="form.amount" placeholder="0.00" />
@@ -287,31 +281,11 @@ const cadenceLabel: Record<string, string> = {
           <NFormItem label="账户" required>
             <NSelect v-model:value="form.account_id" :options="accountOptions" filterable />
           </NFormItem>
-          <NFormItem v-if="form.type !== 'transfer'" label="分类">
+          <NFormItem label="分类">
             <NSelect v-model:value="form.category_id" :options="categoryOptions" filterable />
           </NFormItem>
-          <NFormItem label="周期">
+          <NFormItem label="频率">
             <NSelect v-model:value="form.frequency" :options="cadenceOptions" />
-          </NFormItem>
-          <NFormItem v-if="form.frequency === 'monthly'" label="每月几号">
-            <NInputNumber v-model:value="form.day_of_month" :min="1" :max="31" style="width: 100%" />
-          </NFormItem>
-          <NFormItem v-if="form.frequency === 'weekly'" label="每周几">
-            <NSelect
-              v-model:value="form.weekday"
-              :options="[
-                { label: '周一', value: 1 },
-                { label: '周二', value: 2 },
-                { label: '周三', value: 3 },
-                { label: '周四', value: 4 },
-                { label: '周五', value: 5 },
-                { label: '周六', value: 6 },
-                { label: '周日', value: 0 },
-              ]"
-            />
-          </NFormItem>
-          <NFormItem v-if="form.frequency !== 'daily' && form.frequency !== 'yearly'" label="间隔（每 N 期执行）">
-            <NInputNumber v-model:value="form.interval_n" :min="1" :max="12" style="width: 100%" />
           </NFormItem>
           <NFormItem label="下次执行日">
             <NDatePicker
@@ -327,9 +301,9 @@ const cadenceLabel: Record<string, string> = {
           <NFormItem label="备注">
             <NInput v-model:value="form.note" />
           </NFormItem>
-          <NFormItem label="自动入账">
+          <NFormItem label="到期自动记账">
             <NSwitch v-model:value="form.auto_post" />
-            <NText depth="3" class="hint">&nbsp;开启后到日期自动生成交易（默认仅提醒）</NText>
+            <NText depth="3" class="hint">&nbsp;开启后到日期自动生成交易，关闭则只提醒手动确认</NText>
           </NFormItem>
           <NFormItem label="启用">
             <NSwitch v-model:value="form.is_active" />
@@ -349,6 +323,7 @@ const cadenceLabel: Record<string, string> = {
 </template>
 
 <style scoped>
+.notice { margin-bottom: 12px; border-radius: 6px; }
 .grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
@@ -356,16 +331,18 @@ const cadenceLabel: Record<string, string> = {
 }
 .item { transition: box-shadow .15s; }
 .item:hover { box-shadow: 0 4px 16px rgba(15, 22, 36, 0.08); }
-.head { display: flex; align-items: center; gap: 12px; }
-.head .ico { font-size: 22px; width: 32px; text-align: center; }
+.head { display: flex; align-items: flex-start; gap: 12px; width: 100%; }
 .head .meta { flex: 1; min-width: 0; }
-.head .title { font-size: 14px; font-weight: 500; display: flex; align-items: center; gap: 4px; }
-.head .sub { font-size: 12px; color: var(--hl-muted); display: flex; gap: 6px; flex-wrap: wrap; }
-.head .sub .dot { opacity: .5; }
-.head .amount { font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; }
-.head .amount.income { color: var(--hl-income); }
-.head .amount.expense { color: var(--hl-expense); }
-.footer { display: flex; gap: 8px; align-items: center; margin-top: 4px; }
-.footer .anchor { font-size: 12px; }
+.head .title {
+  font-size: 15px; font-weight: 500; display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+}
+.head .sub {
+  font-size: 12px; color: var(--hl-muted); display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px;
+}
+.head .sub .strong { color: var(--hl-text); font-weight: 600; }
+.head .right { text-align: right; flex-shrink: 0; }
+.head .amount { font-size: 18px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.head .tiny { font-size: 11px; margin-top: 2px; }
+.head .muted { color: var(--hl-muted); }
 .hint { font-size: 12px; }
 </style>
