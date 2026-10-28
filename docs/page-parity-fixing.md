@@ -624,7 +624,7 @@ B1 第二轮修复（用户截图反馈后）：
 | # | 页面 | 旧文件 | 新文件 | 状态 | 差异备注 |
 |---|---|---|---|---|---|
 | D1 | 账户管理 | `accounts.ejs` | `AccountsView.vue` | 已确认 | 见下方修复清单（5 个隐性缺陷 + 14 项功能补齐 + 术语统一）；**已补齐「余额调整」「明细」两个行内操作、账户副行、每组合计、近 30 天流水** |
-| D2 | 账户详情 | `account-detail.ejs` | `AccountDetailView.vue` | 待修 | |
+| D2 | 账户详情 | `account-detail.ejs` | `AccountDetailView.vue` | 已确认 | 用户实测「页面样式就很好，不用修」；**遗留 bug**：`AccountsApi.adjust` 返回 `{ ok, data: { id, delta } }`，前端 `.then(r => r.data)` 后取 `r.delta` → 实为 `r.data.delta`（提示语显示 undefined），留待下一次动此文件时顺手修 |
 | D3 | 预算管理 | `budgets.ejs` + `partials/budget-cat-options.ejs` | `BudgetsView.vue` | 待修 | |
 | D4 | 周期账单 | `recurring.ejs` | `RecurringView.vue` | 待修 | |
 | D5 | 订阅扣费 | `subscriptions.ejs` | `SubscriptionsView.vue` | 已确认 | 见下方修复清单（2 个隐性缺陷 + 16 项功能补齐 + 币种符号支持）；**统计卡全为 0 的致命 bug 已修，分组/月均/历史扣费/管理页外链已补齐** |
@@ -863,7 +863,7 @@ B1 第二轮修复（用户截图反馈后）：
 | P3 | G1~G7 | 裸页，改动相对独立 |
 
 > A3（全局 CSRF）已随 C2 一并处理并实测通过 ✅ 已确认。
-> **P0/P1 已全部完成**，下一项按顺序为 **P2：D2 账户详情**。
+> **P0/P1 已全部完成**。**D2 用户确认「不用修」**。下一项按顺序为 **P2：D3 预算管理**。
 
 ---
 
