@@ -11,6 +11,7 @@ import Empty from '@/components/Empty.vue'
 import StatCard from '@/components/StatCard.vue'
 import AmountDisplay from '@/components/AmountDisplay.vue'
 import { BudgetsApi, TransactionsApi } from '@/api/modules'
+import { fmtAmount } from '@/utils/money'
 import { errorMessage } from '@/api/client'
 import { useFlash } from '@/composables/useFlash'
 import { useSessionStore } from '@/stores/session'
@@ -41,6 +42,7 @@ function emptyForm() {
     period: 'monthly',                 // monthly | yearly | weekly | custom
     is_active: true,
     alert_threshold: 80,
+    trigger_type: 'expense',           // expense | income
   }
 }
 
@@ -81,12 +83,49 @@ const periodOptions = [
   { label: '每周', value: 'weekly' },
   { label: '自定义', value: 'custom' },
 ]
-const categoryOptions = computed(() => [
-  ...categories.value.map((c: any) => ({ label: `${c.icon} ${c.name}`, value: c.id })),
-])
+const triggerTypeOptions = [
+  { label: '支出', value: 'expense' },
+  { label: '收入', value: 'income' },
+]
+function scopeEmoji(scope: string, catIcon?: string) {
+  if (scope === 'overall') return '🎯'
+  if (scope === 'category') return catIcon || '🏷️'
+  return '💳'
+}
+const categoryOptions = computed(() => {
+  const wantIncome = form.value.trigger_type === 'income'
+  return categories.value
+    .filter((c: any) => wantIncome ? c.kind === 'income' : c.kind === 'expense')
+    .map((c: any) => ({ label: `${c.icon} ${c.name}`, value: c.id }))
+})
 const accountOptions = computed(() => [
   ...accounts.value.map((a: any) => ({ label: `${a.icon} ${a.name}`, value: a.id })),
 ])
+
+// scope/trigger_type 改了 → 清 category_id / account_id
+watch(
+  () => form.value.scope,
+  (v, old) => {
+    if (v !== old) {
+      form.value.category_id = 0
+      form.value.account_id = 0
+    }
+  }
+)
+watch(
+  () => form.value.trigger_type,
+  (v, old) => {
+    if (v !== old) form.value.category_id = 0
+  }
+)
+
+const drawerTitle = computed(() => {
+  if (editing.value) {
+    return `${scopeEmoji(editing.value.scope, editing.value.category_icon)} ${editing.value.name || editing.value.scopeLabel || '编辑预算'}`
+  }
+  const label = scopeOptions.find((o) => o.value === form.value.scope)?.label || '预算'
+  return `新建 · ${scopeEmoji(form.value.scope)}${label}`
+})
 
 function openCreate() {
   editing.value = null
@@ -105,6 +144,7 @@ function openEdit(b: any) {
     period: b.period || 'monthly',
     is_active: !!b.is_active,
     alert_threshold: b.alert_threshold || b.alert_pct || 80,
+    trigger_type: b.trigger_type === 'income' ? 'income' : 'expense',
   }
   drawerOpen.value = true
 }
@@ -123,6 +163,7 @@ async function onSubmit() {
       period: form.value.period,
       is_active: form.value.is_active ? 1 : 0,
       alert_threshold: form.value.alert_threshold,
+      trigger_type: form.value.trigger_type,
     }
     if (form.value.scope === 'category') payload.category_id = form.value.category_id
     if (form.value.scope === 'account') payload.account_id = form.value.account_id
@@ -161,10 +202,22 @@ async function onDelete(b: any) {
 
 const stats = computed(() => {
   const cur = data.value.overall || {}
+  const list = data.value.budgets || []
+  const activeCount = list.filter((b: any) => b.is_active).length
+  const totalCount = list.length
+  const net = Number(cur.income || 0) - Number(cur.expense || 0)
   return {
     income: cur.income || 0,
     expense: cur.expense || 0,
     totalBudget: data.value.totalBudget || 0,
+    activeCount,
+    totalCount,
+    count: cur.count || 0,
+    net,
+    expenseHint: `共 ${cur.count || 0} 笔`,
+    incomeHint: net >= 0 ? `结余 ${fmtAmount(net)}` : `缺口 ${fmtAmount(net)}`,
+    activeHint: `共 ${totalCount} 条规则`,
+    totalBudgetHint: '超支或接近额度时自动提醒',
   }
 })
 
@@ -184,15 +237,18 @@ function statusTone(b: any): 'success' | 'warning' | 'error' | 'default' {
     </PageHead>
 
     <!-- 总览 -->
-    <NGrid :cols="3" :x-gap="12" :y-gap="12" responsive="screen" :item-responsive="true" class="stats">
-      <NGridItem span="3 m:1 l:1">
-        <StatCard label="本月收入" icon="💰" :value="stats.income" tone="income" />
+    <NGrid :cols="4" :x-gap="12" :y-gap="12" responsive="screen" class="stats">
+      <NGridItem span="1">
+        <StatCard label="本月总支出" icon="💸" :value="stats.expense" tone="expense" :hint="stats.expenseHint" />
       </NGridItem>
-      <NGridItem span="3 m:1 l:1">
-        <StatCard label="本月支出" icon="💸" :value="stats.expense" tone="expense" />
+      <NGridItem span="1">
+        <StatCard label="本月总收入" icon="💰" :value="stats.income" tone="income" :hint="stats.incomeHint" />
       </NGridItem>
-      <NGridItem span="3 m:1 l:1">
-        <StatCard label="总预算" icon="🎯" :value="stats.totalBudget" tone="neutral" hint="总预算类目汇总" />
+      <NGridItem span="1">
+        <StatCard label="生效中预算" icon="🎯" :value="stats.activeCount" :hint="stats.activeHint" />
+      </NGridItem>
+      <NGridItem span="1">
+        <StatCard label="总预算额度" icon="📋" :value="stats.totalBudget" tone="neutral" :hint="stats.totalBudgetHint" />
       </NGridItem>
     </NGrid>
 
@@ -216,15 +272,20 @@ function statusTone(b: any): 'success' | 'warning' | 'error' | 'default' {
         >
           <template #header>
             <div class="card-head">
-              <span class="title">{{ b.scopeLabel }}</span>
-              <NSpace size="small">
-                <NTag :type="b.is_active ? 'default' : 'warning'" size="small" :bordered="false">
-                  {{ b.is_active ? b.periodLabel : '已停用' }}
-                </NTag>
-                <NTag :type="statusTone(b)" size="small" :bordered="false">
-                  {{ b.ratio.toFixed(0) }}%
-                </NTag>
-              </NSpace>
+              <div>
+                <span class="title" :class="{ inactive: !b.is_active }">
+                  {{ scopeEmoji(b.scope, b.category_icon) }} {{ b.name || b.scopeLabel }}
+                  <NTag v-if="!b.is_active" type="warning" size="small" :bordered="false" style="margin-left:6px">已停用</NTag>
+                </span>
+                <div class="tiny-muted">
+                  {{ b.scopeLabel }} · {{ b.periodLabel }} · {{ b.rangeLabel }}
+                  <template v-if="b.trigger_type === 'income'"> · 统计收入</template>
+                </div>
+              </div>
+              <div class="card-right">
+                <AmountDisplay :cents="b.used" :sign="true" tone="expense" class="used-big" />
+                <span class="muted">/ <AmountDisplay :cents="b.amount_cents" tone="neutral" /></span>
+              </div>
             </div>
           </template>
           <template #header-extra>
@@ -241,20 +302,10 @@ function statusTone(b: any): 'success' | 'warning' | 'error' | 'default' {
                 <template #trigger>
                   <NButton size="tiny" quaternary type="error">删除</NButton>
                 </template>
-                确定删除「{{ b.scopeLabel }}」？
+                确定删除「{{ b.name || b.scopeLabel }}」？
               </NPopconfirm>
             </NSpace>
           </template>
-
-          <div class="amount-row">
-            <div class="used">
-              <AmountDisplay :cents="b.used" :sign="true" tone="expense" />
-              <span class="muted">/ <AmountDisplay :cents="b.amount_cents" tone="neutral" /></span>
-            </div>
-            <div class="remain" :class="{ neg: b.remain < 0 }">
-              剩余 <AmountDisplay :cents="b.remain" />
-            </div>
-          </div>
 
           <NProgress
             :percentage="Math.min(100, b.ratio)"
@@ -265,9 +316,16 @@ function statusTone(b: any): 'success' | 'warning' | 'error' | 'default' {
             class="progress"
           />
 
-          <div class="meta">
-            <span>📅 {{ b.rangeLabel }}</span>
-            <span v-if="b.dailyAllowance">🪙 每天可花 <AmountDisplay :cents="b.dailyAllowance" /></span>
+          <div class="foot-row">
+            <span :class="{ 'amount expense-neg': b.ratio >= 100, muted: b.ratio < 100 }">
+              <template v-if="b.ratio >= 100">
+                已超支 <AmountDisplay :cents="b.used - b.amount_cents" :sign="true" tone="expense" />（{{ b.ratio.toFixed(0) }}%）
+              </template>
+              <template v-else>
+                还剩 <AmountDisplay :cents="b.remain" />（已用 {{ b.ratio.toFixed(0) }}%）
+              </template>
+            </span>
+            <span class="muted" v-if="b.dailyAllowance">每天可用 <AmountDisplay :cents="b.dailyAllowance" /></span>
           </div>
         </NCard>
       </div>
@@ -275,8 +333,14 @@ function statusTone(b: any): 'success' | 'warning' | 'error' | 'default' {
 
     <!-- 抽屉 -->
     <NDrawer v-model:show="drawerOpen" :width="420" placement="right">
-      <NDrawerContent :title="editing ? '编辑预算' : '新建预算'" :native-scrollbar="false">
+      <NDrawerContent :title="drawerTitle" :native-scrollbar="false">
         <NForm label-placement="top" :model="form">
+          <NFormItem v-if="editing" label="预算名称">
+            <NInput v-model:value="form.name" placeholder="预算名称" />
+          </NFormItem>
+          <NFormItem label="统计对象">
+            <NSelect v-model:value="form.trigger_type" :options="triggerTypeOptions" />
+          </NFormItem>
           <NFormItem label="类型">
             <NSelect v-model:value="form.scope" :options="scopeOptions" :disabled="!!editing" />
           </NFormItem>
@@ -303,7 +367,7 @@ function statusTone(b: any): 'success' | 'warning' | 'error' | 'default' {
             <NSelect v-model:value="form.period" :options="periodOptions" />
           </NFormItem>
           <NFormItem label="预警阈值">
-            <NInputNumber v-model:value="form.alert_threshold" :min="50" :max="100" :step="5" style="width: 100%" />
+            <NInputNumber v-model:value="form.alert_threshold" :min="10" :max="100" :step="5" style="width: 100%" />
             <NText depth="3" class="hint">&nbsp;达到该百分比时通知（默认 80%）</NText>
           </NFormItem>
           <NFormItem label="启用">
@@ -332,17 +396,18 @@ function statusTone(b: any): 'success' | 'warning' | 'error' | 'default' {
 }
 .budget-card { transition: box-shadow .15s; }
 .budget-card:hover { box-shadow: 0 4px 16px rgba(15, 22, 36, 0.08); }
-.card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.card-head .title { font-size: 14px; font-weight: 500; }
-.amount-row {
-  display: flex; align-items: baseline; justify-content: space-between;
-  margin: 8px 0;
+.card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; width: 100%; }
+.card-head .title { font-size: 15px; font-weight: 500; }
+.card-head .title.inactive { color: var(--hl-muted); text-decoration: line-through; }
+.card-head .tiny-muted { font-size: 12px; color: var(--hl-muted); margin-top: 4px; }
+.card-head .card-right { text-align: right; flex-shrink: 0; }
+.card-head .used-big { font-size: 19px; font-weight: 600; }
+.progress { margin: 10px 0 6px; }
+.foot-row {
+  display: flex; align-items: center; justify-content: space-between;
+  font-size: 12px; margin-top: 4px; gap: 12px;
 }
-.amount-row .used { font-size: 18px; font-weight: 600; }
-.amount-row .used .muted { color: var(--hl-muted); font-weight: 400; font-size: 13px; }
-.amount-row .remain { font-size: 12px; color: var(--hl-muted); }
-.amount-row .remain.neg { color: var(--hl-expense); font-weight: 500; }
-.progress { margin: 6px 0; }
-.meta { display: flex; gap: 12px; font-size: 12px; color: var(--hl-muted); margin-top: 8px; }
+.foot-row .amount.expense-neg { color: var(--hl-expense); font-weight: 500; }
+.muted { color: var(--hl-muted); font-size: 12px; }
 .hint { font-size: 12px; }
 </style>
