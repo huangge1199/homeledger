@@ -551,7 +551,7 @@ onBeforeUnmount(() => {
                 <label>时刻</label>
                 <NTimePicker
                   :value="timeToMs(d.txn_time)"
-                  format="HH:mm"
+                  format="HH:mm:ss"
                   :clearable="true"
                   placeholder="可选"
                   @update:value="(v: number | null) => (d.txn_time = msToTime(v))"

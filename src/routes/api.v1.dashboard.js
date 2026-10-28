@@ -101,8 +101,13 @@ router.get('/search', auth.requireLogin, api.asyncHandler((req, res) => {
     page: Number(req.query.page) || 1,
     pageSize: 30,
   };
-  const hasQuery = Object.values(f).some((v) =>
-    v !== '' && v !== null && v !== undefined && v !== 1 && v !== 30 && v !== 'date_desc');
+  // 「有无筛选条件」只看业务筛选项，不看 page/pageSize/sort 等分页排序参数。
+  // 老版用 Object.values(f).some(v => v !== 1 && v !== 30 ...) 判断，会把
+  // memberId === 1（第一个成员）误判成「没有条件」，导致按成员筛选永远返回空。
+  const hasQuery = [
+    f.keyword, f.type, f.categoryId, f.accountId, f.memberId,
+    f.tagId, f.source, f.from, f.to, f.minCents, f.maxCents,
+  ].some((v) => v !== '' && v !== null && v !== undefined && v !== 0);
   const result = hasQuery || f.keyword
     ? txn.listTransactions(ledgerId, f)
     : { rows: [], total: 0, page: 1, pages: 1, sum: { income: 0, expense: 0 } };

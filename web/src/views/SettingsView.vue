@@ -18,6 +18,7 @@ import AppShell from '@/layouts/AppShell.vue'
 import PageHead from '@/components/PageHead.vue'
 import { AdminApi } from '@/api/modules'
 import { errorMessage } from '@/api/client'
+import { csrfFetch } from '@/api/csrfFetch'
 import { useFlash } from '@/composables/useFlash'
 import { useSessionStore } from '@/stores/session'
 
@@ -339,16 +340,15 @@ async function createToken() {
   if (!tokenName.value.trim()) { message.warning('请填写令牌名'); return }
   creatingToken.value = true
   try {
-    const r = await fetch('/api/v1/admin/settings/api-tokens', {
+    const r = await csrfFetch('/api/v1/admin/settings/api-tokens', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': session.csrf },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name: tokenName.value }),
-      credentials: 'include',
     })
     const j = await r.json()
     if (!r.ok) throw new Error(j?.error || '创建失败')
     // 拉明文 token（仅一次性）
-    const t = await fetch('/api/v1/admin/settings/api-tokens/new', { credentials: 'include' })
+    const t = await csrfFetch('/api/v1/admin/settings/api-tokens/new')
     const tj = await t.json()
     newToken.value = { name: tokenName.value, token: tj.newToken?.token || '' }
     tokenVisible.value = false
@@ -368,11 +368,7 @@ async function copyToClipboard(text: string) {
 }
 async function revokeToken(t: any) {
   try {
-    const r = await fetch(`/api/v1/admin/settings/api-tokens/${t.id}/revoke`, {
-      method: 'POST',
-      headers: { 'X-CSRF-Token': session.csrf },
-      credentials: 'include',
-    })
+    const r = await csrfFetch(`/api/v1/admin/settings/api-tokens/${t.id}/revoke`, { method: 'POST' })
     if (r.ok) { success('已吊销'); load() }
     else toastError('吊销失败')
   } catch (e) { toastError('吊销失败') }

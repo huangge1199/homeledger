@@ -5,6 +5,7 @@ import { NCard, NForm, NFormItem, NInput, NButton, NCheckbox, NText, NTag, NAler
 import { useMessage } from 'naive-ui'
 import BlankLayout from '@/layouts/BlankLayout.vue'
 import { login as doLogin } from '@/api/auth'
+import { csrfFetch } from '@/api/csrfFetch'
 import { useSessionStore } from '@/stores/session'
 
 const router = useRouter()
@@ -33,7 +34,7 @@ onMounted(async () => {
   } catch { /* ignore */ }
   // 检测是否开放注册（站点设置）
   try {
-    const r = await fetch('/api/v1/admin/settings', { credentials: 'include' })
+    const r = await csrfFetch('/api/v1/admin/settings')
     if (r.ok) {
       const j = await r.json()
       allowRegister.value = String(j?.data?.settings?.['site.allow_register']) === 'true'

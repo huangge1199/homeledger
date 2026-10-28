@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, watch } from 'vue'
-import { darkTheme, NConfigProvider, NMessageProvider, NDialogProvider, NNotificationProvider, NSpin, NText, NLoadingBarProvider } from 'naive-ui'
+import { darkTheme, NConfigProvider, NMessageProvider, NDialogProvider, NNotificationProvider, NSpin, NText, NLoadingBarProvider, zhCN, dateZhCN } from 'naive-ui'
 import { RouterView } from 'vue-router'
 import { useSessionStore } from '@/stores/session'
 import { useFlash } from '@/composables/useFlash'
@@ -27,7 +27,18 @@ watch(theme, (t) => {
 </script>
 
 <template>
-  <NConfigProvider :theme="theme === 'dark' ? darkTheme : null" :class="theme === 'dark' ? 'hl-theme-dark' : 'hl-theme-light'">
+  <!--
+    locale / dateLocale：naive-ui 的组件文案（日期面板的「选择日期 / 今天 / 清除」、
+    Select 的「请选择」、Popconfirm 的「确认 / 取消」等）都从这里取。
+    不配的话会回退到 enUS，日期选择器就显示英文 "Select Date"。
+    dateLocale 额外决定日期面板里月份/星期的本地化写法（date-fns 的 zh-CN）。
+  -->
+  <NConfigProvider
+    :theme="theme === 'dark' ? darkTheme : null"
+    :locale="zhCN"
+    :date-locale="dateZhCN"
+    :class="theme === 'dark' ? 'hl-theme-dark' : 'hl-theme-light'"
+  >
     <NLoadingBarProvider>
       <NMessageProvider>
         <NDialogProvider>

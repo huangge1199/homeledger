@@ -3,6 +3,7 @@
  * 启动时调 /api/v1/session 拉取，401 自动由 axios 拦截器跳登录
  */
 import { defineStore } from 'pinia'
+import { csrfFetch } from '@/api/csrfFetch'
 
 export interface SessionUser {
   id: number
@@ -120,13 +121,11 @@ export const useSessionStore = defineStore('session', {
       const fd = new URLSearchParams()
       fd.append('ledger_id', String(ledgerId))
       fd.append('back', window.location.pathname + window.location.search)
-      const csrf = this.csrf
       // 复用原 SSR 端点（POST 一次，session 切账本）
-      const res = await fetch('/ledgers/switch', {
+      const res = await csrfFetch('/ledgers/switch', {
         method: 'POST',
         body: fd,
-        credentials: 'include',
-        headers: csrf ? { 'X-CSRF-Token': csrf } : undefined,
+        headers: this.csrf ? { 'X-CSRF-Token': this.csrf } : undefined,
       })
       if (res.ok || res.redirected) {
         await this.refresh()
@@ -138,10 +137,9 @@ export const useSessionStore = defineStore('session', {
         // 后端 express.urlencoded 不会解析 multipart，CSRF 校验就拿不到 _csrf
         const fd = new URLSearchParams()
         fd.append('_csrf', this.csrf)
-        await fetch('/logout', {
+        await csrfFetch('/logout', {
           method: 'POST',
           body: fd,
-          credentials: 'include',
           redirect: 'follow',
         })
       } catch { /* ignore */ }

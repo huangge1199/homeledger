@@ -30,7 +30,7 @@
 |---|---|---|---|---|---|
 | A1 | 侧栏 + 顶栏 + 移动端 + AI 浮窗 | `layout.ejs` | `AppShell.vue` + `AiPanel.vue` | 已确认 | 见下方修复清单 |
 | A2 | 空白页全局阻断（RouterView 嵌套） | — | `AppShell.vue` | 已确认 | 见下方修复清单 |
-| A3 | 全局 fetch+FormData 被 CSRF 拦截 | — | `session.ts` | 待确认 | 见下方修复清单 |
+| A3 | 全局 fetch+FormData 被 CSRF 拦截 | — | `session.ts` + `api/csrfFetch.ts` | 已确认 | 见下方修复清单（2026-10-28 统一封装 `csrfFetch`，5 处裸 fetch 收敛） |
 
 A1 已修复内容：
 
@@ -74,6 +74,19 @@ A1 已修复内容：
 **修复**：两处 `new FormData()` 改为 `new URLSearchParams()`，浏览器自动以 `application/x-www-form-urlencoded` 发送，`express.urlencoded` 可正常解析。
 
 **教训**：SPA 里直发非 `/api/v1` 的 SSR 遗留 POST 端点时，表单体必须用 `URLSearchParams`（urlencoded）；`FormData`（multipart）在后端没有对应解析中间件，字段全会丢。
+
+**2026-10-28 收尾（随 C2 一并处理）：统一封装 `csrfFetch`**
+
+上述两处虽然各自修好了，但「CSRF token 从哪来、header 怎么带、401 怎么跳登录」这三件事在多个文件里各写一遍，后续很容易再写错。故新增 `web/src/api/csrfFetch.ts`：
+
+| 能力 | 说明 |
+|---|---|
+| 自动注入 CSRF 头 | 非幂等方法（GET/HEAD/OPTIONS 除外）自动带 `X-CSRF-Token`，token 优先取 store 的 `session.csrf`，回退读 `<meta name="csrf">` |
+| 统一携带凭证 | 固定 `credentials: 'include'`，避免漏传 cookie |
+| 401 自动跳登录 | 收到 401 时拼 `next` 参数并 `router.replace('/login?next=...')`，回跳原页面 |
+| 可选跳过 | `skipCsrf: true` 用于确实不需要 token 的读接口 |
+
+**5 处裸 `fetch` 收敛到 `csrfFetch`**：`stores/session.ts`（`switchLedger` / `logout`）、`views/SettingsView.vue`（`createToken` / `revokeToken`）、`views/LoginView.vue`（读站点设置）。实测：令牌创建 → 吊销全链路通过。
 
 ---
 
@@ -485,7 +498,7 @@ B1 第二轮修复（用户截图反馈后）：
 | # | 页面 | 旧文件 | 新文件 | 状态 | 差异备注 |
 |---|---|---|---|---|---|
 | C1 | 报表分析 | `reports.ejs` | `ReportsView.vue` | 已确认 | **12 个字段名错配**（数据全空/恒 0）+ 补齐老版 13 项功能；2026-10-28 修复，详见下方 |
-| C2 | 搜索筛选 | `search.ejs` | `SearchView.vue` | 待修 | **当前白屏**：`NDatePicker` 的 `v-model:value` 直接绑 `f.from`/`f.to`（初值 `''` 字符串），naive 只收毫秒时间戳 → `RangeError: Invalid time value`，setup 抛错致组件不渲染。修法：改用 `DatePickerWrap` 组件或内部把字符串↔时间戳互转 |
+| C2 | 搜索筛选 | `search.ejs` | `SearchView.vue` | 待确认 | **白屏已修**（`NDatePicker` 绑字符串致 setup 抛错）+ 12 项缺陷修复 + 结果列表改用 `TxnList`；2026-10-28 修复，详见下方 |
 
 #### C1 报表分析修复（2026-10-28）
 
@@ -536,7 +549,48 @@ B1 第二轮修复（用户截图反馈后）：
 
 **结构决策（用户确认）：** 保留新版的 6 个 tab 布局，不改回老版单页平铺；老版关键信息补进各对应 tab。
 
-**验证：** `npm run build` 0 错误；浏览器实测 6 个 tab + 5 种区间预设 + 收入/支出视角 + 分类下钻/返回一级全部通过（金额、占比、笔数、净资产、账户余额、环比均正确渲染）。**已确认** |
+**验证：** `npm run build` 0 错误；浏览器实测 6 个 tab + 5 种区间预设 + 收入/支出视角 + 分类下钻/返回一级全部通过（金额、占比、笔数、净资产、账户余额、环比均正确渲染）。**已确认**
+
+#### C2 搜索筛选修复（2026-10-28）
+
+以老版 `src/views/search.ejs` + `src/routes/dashboard.js` 的搜索分支为行为基准，重写 `web/src/views/SearchView.vue`，并修后端 `api.v1.dashboard.js` 的一个老版遗留 bug。
+
+**1 个致命缺陷（页面完全不可用）：白屏**
+
+| # | 缺陷 | 现象 | 根因 | 修法 |
+|---|---|---|---|---|
+| 1 | **`/search` 整页白屏** | dev 下 `body` 长度为 0，生产构建渲染成空壳 `<div class="undefined-date-picker">` | `NDatePicker` 的 `v-model:value` 直接绑 `f.from`/`f.to`（初值是字符串 `''`），而 naive-ui 只接受**毫秒时间戳** → `deriveSingleInputState` 抛 `RangeError: Invalid time value` → setup 中断、组件不渲染 | 改用项目已有的 `DatePickerWrap.vue`（内部做字符串↔时间戳互转） |
+
+**11 项行为缺陷 / 差异：**
+
+| # | 缺陷 | 现象 | 根因 | 修法 |
+|---|---|---|---|---|
+| 2 | **按成员筛选永远返回 0 条** | 选任何成员都是「没有记录」 | 后端 `hasQuery` 用 `Object.values(f).some(v => v !== 1 && v !== 30 ...)` 判断有无筛选条件，会把 **`memberId === 1`（第一个成员）误判成「没有条件」** | 后端改为显式列举业务筛选项数组判断（不看 page/pageSize/sort 等分页排序参数） |
+| 3 | 成员筛选传错 ID | 选中后查不到数据 | 前端取 `m.id`（**成员关系行 ID**），老版用 `m.user_id`（用户 ID），后端 `t.user_id = ?` 匹配的是用户 ID | 改为 `m.user_id` |
+| 4 | 结果列表显示「还没有记录」 | 有数据却渲染空态 | 后端把按日分组放在响应**顶层** `data.groups`，前端读的是 `data.result.groups` | 改为读 `d.groups` |
+| 5 | 结果列表是自绘表格 | 与明细页风格不一致 | 老版 `search.ejs` 复用 `txn-list.ejs` 片段 | 改用 `TxnList.vue` 组件（用户确认方案） |
+| 6 | 收支符号/金额显示错误 | 支出显示为正数 | 自绘金额未做符号处理 | `TxnList` 内部 `signedAmount()` 按 `is_expense`/`is_income` 处理，与 `TransactionsView` 同口径 |
+| 7 | 分类下拉只有一级分类 | 无法按二级分类搜 | 前端没拼层级路径 | 按 `支 · 餐饮/早餐` 格式列出**二级分类**（一级分类 id 作父级不入选项） |
+| 8 | 缺「来源」筛选 | 老版可按手动/AI/导入筛 | 未实现 | 补「全部来源 / 手动记账 / AI 截图 / AI 文字 / 账单导入 / 周期账单」 |
+| 9 | 排序文案与老版不一致 | 术语不统一 | 自定义文案 | 改回老版：最新在前 / 最早在前 / 金额从大到小 / 金额从小到大 |
+| 10 | 关键词提示语不对 | 引导缺失 | 文案自造 | 改为「关键字：备注 / 商家 / 分类 / 金额」；金额输入框加 `¥` 前缀 |
+| 11 | 筛选条件刷新后丢失 | 无法分享/回退 | 状态只存在组件内 | 全部筛选条件同步到 `route.query`（URL 驱动，刷新/分享可还原） |
+
+**附带完成 —— A3 全局 CSRF 统一封装**：见上文 A3 章节（新增 `api/csrfFetch.ts`，5 处裸 `fetch` 收敛）。
+
+**验证**：`npm run build` 0 错误；浏览器实测（临时在 5112 端口起独立实例，不触碰用户正在运行的 5111，测完已停掉）：
+- 白屏修复：页面正常渲染，两个日期选择器正常回填
+- 成员筛选：`member_id=1` 从 0 条 → **1369 条**；`member_id=2` → 0 条（数据本身无记录，正确）
+- 分类 + 日期组合筛选：15 笔，日期选择器回填「2026年10月1日」
+- 来源 + 金额组合筛选：16 笔，金额输入回填 5 / 20
+- 分类名下钻：URL 变 `?q=餐&category_id=3`，结果 97 笔
+- 翻页：URL 带 `page=2`，显示 2/20
+- `TxnList` 结果项实测渲染：日期分组（10月25日/星期日）、当日小计（-¥28.39）、分类+父级、商户、账户、成员、**消费时刻 12:28:00**、**来源 chip AI**、**附件数 📎 1**、收支符号（-¥15.59）
+- A3 `csrfFetch` 全链路：令牌创建成功（「✅ 令牌「C2测试令牌」已创建」）→ 吊销成功（回到 0 个令牌）
+
+**测试数据已清理**（令牌记录已从库中删除，临时实例已停，临时日志已删）。
+
+**注意**：后端 `api.v1.dashboard.js` 有改动（修 `hasQuery` bug），用户 5111 进程未带 `--watch`，**需重启才会生效**。 |
 
 ---
 
@@ -778,13 +832,13 @@ B1 第二轮修复（用户截图反馈后）：
 | P0 | F4 设置 | 老版 25KB，功能最全，最易漏 ✅ 已确认 |
 | P1 | D1、D5、B6、B7 | 资产与订阅是核心能力 ✅ 已确认 |
 | P1 | C1 报表 | 图表/区间逻辑复杂 ✅ 已确认 |
-| P1 | C2 搜索筛选 | **当前白屏**（`NDatePicker` 绑字符串致 setup 抛错）← **下一项** |
+| P1 | C2 搜索筛选 | 白屏 + 成员筛选失效 + 结果列表改用 TxnList ✅ 已确认 |
 | P2 | D2~D7、E1~E4 | 常规 CRUD |
 | P2 | F1~F3、F5 | 系统页 |
 | P3 | G1~G7 | 裸页，改动相对独立 |
 
-> 尚待确认：A3（全局 CSRF，用户决策留到 C2 阶段一并处理）。
-> **P0/P1 已全部完成**（除 C2），下一项按顺序为 C2。
+> A3（全局 CSRF）已随 C2 一并处理并实测通过 ✅ 已确认。
+> **P0/P1 已全部完成**，下一项按顺序为 **P2：D2 账户详情**。
 
 ---
 
@@ -798,7 +852,7 @@ B1 第二轮修复（用户截图反馈后）：
 | 2026-10-19 | A2 | **全局阻断**：`AppShell` 内嵌 `<RouterView>` 致所有页面内容区空白，改为 `<slot>`。属架构遗留缺陷，非对等修复范畴 |
 | 2026-10-19 | B2+ | 截图反馈 3 处小修：表单行距统一 10px、可报销开关改横排、分类浮层补背景 |
 | 2026-10-19 | B3 | 账单明细 15 项（详见上表），含后端 `sum` 透传、`reimbursable=1` 归一化、chips/汇总/分页/筛选/批量报销/行内按钮全量补齐。**待确认** |
-| 2026-10-19 | A3 | **退出登录 403**：store 里 `fetch`+`FormData`（multipart）不被 `express.urlencoded` 解析，CSRF token 丢失；`logout()`/`switchLedger()` 改用 `URLSearchParams`，顺带修复切账本静默失效。**待确认** |
+| 2026-10-19 | A3 | **退出登录 403**：store 里 `fetch`+`FormData`（multipart）不被 `express.urlencoded` 解析，CSRF token 丢失；`logout()`/`switchLedger()` 改用 `URLSearchParams`，顺带修复切账本静默失效。**2026-10-28 随 C2 收尾**：统一封装 `api/csrfFetch.ts`，5 处裸 fetch 收敛，实测令牌创建/吊销通过。**已确认** |
 | 2026-10-21 | B3-2 | 账单明细第二轮 19 项（详见上表）。**3 个隐性缺陷**：`NGrid`/`NGridItem` 未 import 导致筛选网格运行时失效、支出金额误显 `+¥50.00`、日小计 `++` 双前缀；**口径修正**：日小计改用后端 `groupByDate` 结果，与汇总行 `sum` 对齐；**功能补齐**：分类下拉 optgroup 层级、汇总行导出入口、全选本页、批量改分类/加标签、pager 页码列表、pageSize 40、分类名可点筛选；**TxnList 行内细节** 8 项（报销徽标按 `reimbursed_at`、待确认文案、附件徽标位置、商家去 `@`、备注位置、账户兜底、`relLabel` 补前天/跨年）。`npm run build` 0 错误。**待确认** |
 | 2026-10-21 | B3-3 | 分页样式对齐老版 5 项：上一页/下一页由 naive `NButton` 改原生 `<button class="pg">`（与页码同款白底边框 7px 圆角）、改按需出现而非禁用恒显、省略号补 32px 方形占位、页码窗口改老版固定 5 页滑动算法、按钮补 `font-family: inherit`。`npm run build` 0 错误。**已确认** |
 | 2026-10-21 | B4 | 记录详情页从占位页重写为完整实现（11 项，详见上表）。老版无独立详情页（是弹窗），以老版弹窗字段为基准落到新版独立路由页；后端 `GET /api/v1/transactions/:id` 已返回 `{txn, attachments, splits}`，**无需改后端**。含头部金额区、13 项键值信息、AA 分账卡、附件画廊 + `NImage` 放大、编辑/删除（`canWrite` 门控）、404 空态。**顺带修一处会丢数据的 bug**：`TxnFormView` 读 `tx.tags` 回填标签，而后端只返回 `tag_names` → 编辑保存会清空原标签。`npm run build` 0 错误。**已确认** |
@@ -814,3 +868,4 @@ B1 第二轮修复（用户截图反馈后）：
 | 2026-10-27 | D1 | 账户管理按老版 `accounts.ejs`（183 行）重写 `AccountsView.vue` + 补 `api.v1.accounts.js` 归档字段。**5 个隐性缺陷**：① 前端判 `a.flow?.in` 但后端字段是 `flow.out`/`flow.inflow`（**无 `flow.in`**）→ **近 30 天流水永不显示**（已改老版口径「近30天 −out / +inflow」并移到金额右侧）；② 总负债多套一层 `-Math.abs()` → **显示成负数**（老版是正数，已去掉）；③ 账户副行（币种·尾号·账单日·还款日）**全丢**（已补 `accountMeta()`）；④ 分组用 `Object.keys().sort()` → **字母序**，老版是 `ACCOUNT_TYPES` 定义顺序（已改）；⑤ 后端 `archived` 未补 `flow`/`typeLabel`/`isLiability`（已补）。**14 项功能补齐**：统计卡 3 条 hint 副标题、净资产负数标红、「共 N 个在用账户，M 个已停用」+「＋ 添加账户」、每组卡头「合计 ¥X」、行内补**「明细」**和**「余额调整」**两个操作（老版有、新版缺）、账户行改上下两行且操作按钮**常显**（原 `display:none` 靠 hover，移动端点不到）、负债类账户余额也标红、币种补齐 7 种（缺 GBP/SGD）且默认取站点本位币、额度/账单日/还款日**去掉 credit 条件**（老版无条件显示）、空态与已停用卡文案回老版、删除确认文案回老版。**术语统一**为老版「停用」。**后端**：`GET /accounts` 的 archived 补 3 字段。`npm run build` 0 错误，`node --check` + 浏览器实测（含创建外币账户→编辑存账期→余额调整→停用→删除拦截→**测试数据已清理**）通过。**遗留**：`AccountDetailView`（D2）余额调整提示语 `r.delta` 应为 `r.data.delta`，留待 D2。**已确认** |
 | 2026-10-28 | B6-4 | **修复「AI 识别丢失消费时刻」**（用户全程旁观实测发现：识别时忽略时间、没存库、后续操作全看不到具体时间）。`txn_time` 字段在 B1 阶段已建好，但 **AI 识别这条链路从未碰过它**，共 **5 处断点**：① `SYSTEM_PROMPT` 根本没要求输出时刻（补第 5 条要求 + 输出格式示例加 `txn_time`）；② `normalizeItem` 丢弃模型输出的时刻（新增 `normalizeTime()` 归一化 `HH:mm`，兼容 `12：30`/`12:30:05`/`8:05`，非法值归空）；③ 规则引擎 `parseTextByRules` 不抽时间（新增 `extractTime()`，支持 `12:30`/`12点30分`/`下午3点`+12/`凌晨12点`→00:00）；④ `POST /ai/confirm` 与 `POST /ai/chat` 入库都漏传 `txn_time`（两处都补）；⑤ 前端 `AiView.vue` 无处可改无处可传（`Draft` 补字段 + 草稿卡新增「时刻」`NTimePicker` + `buildItems` 带时刻 + **文字快速记账单笔跳转 query 补 `txn_time`**）。**连带修 2 处**：`TxnFormView.vue` 解析 `route.query` 时没读 `txn_time`（AI 文字记账跳过来时表单时刻为空）；`NTimePicker` 去掉与 `value` 混用的 `formatted-value`。**验证**：`npm run build` 0 错误、`node --check` 通过、解析逻辑 14 组用例全对、入库/读取链路自检通过；**浏览器端到端实测**（临时在 5112 端口起独立实例，不触碰用户正在运行的 5111，测完已停掉）：文字记账「午饭 35 支付宝 12:30」→ 跳转带 `txn_time=12:30` → 表单预填 `12:30:00` → 入库 `12:30:00` → 列表/详情均显示时刻；截图识别含 `12:45` 的收据 → 草稿卡时刻自动预填 `12:45` → 入库 `12:45:00` → 列表显示 `12:45:00`。**测试数据已清理**（交易回到 2710、附件回到 4）。**注意**：后端进程未带 `--watch`，用户需重启 5111 才会加载本次后端改动。**已确认** |
 | 2026-10-28 | C1 | 报表分析按老版 `reports.ejs` + `routes/reports.js` + `lib/charts.js` 重写 `ReportsView.vue`，**后端 `api.v1.reports.js` 与老版行为一致、无需改动**，问题几乎全在前端。**12 个隐性缺陷（字段名错配 → 数据全空/恒 0）**：① `cats[].amount_cents` → 实为 `total`（分类表金额列全空，**饼图同错导致环图整块空白**）；② `cats[].percent` 后端无此字段 → 占比显示 `NaN%`；③ `cats[].count` → 实为 `cnt`；④ `members[].display_name` → 实为 `name`；⑤ `overview.netWorth` → 实为 `net`（净资产卡恒 ¥0.00）；⑥ `overview.totalAssets` → 实为 `assets`；⑦ `overview.totalLiabilities` → 实为 `liabilities`；⑧ `accounts[].current_cents` → 实为 `balance_cents`；⑨ `accounts[].init_cents` → 实为 `initial_cents`；⑩ `netWorth[].date`/`.netWorth` → 实为 `.month`/`.value`（净资产折线图 X 轴全 undefined）；⑪ `expenseCount.avg` 是「分」却按「元」用 → 笔均支出放大 100 倍；⑫ 图表数据未做「分→元」换算 → 所有图表 Y 轴放大 100 倍。**13 项老版功能补齐**：分类下钻（复用后端已有 `?top=`，chips 传一级分类名 + 「返回一级」）、**分类排行榜横向条形图**（新增 `RankBars.vue`，TOP 30）、环图中心金额、**环图图例列表**（新增 `DonutLegend.vue`）、同期对比改老版表格结构并补**环比百分比**、结余卡补储蓄率、笔均支出卡补「N 笔 · 记账 M 天」、每日走势标注「支出最高的一天」、成员对比补头像+进度条+首字母、账户表补「占净资产 %」列、净资产走势补摘要行、X 轴短标签（新增 `utils/format.ts` 的 `monthShort`）、**区间筛选改为 URL 驱动**（刷新/分享可还原）。**体验细节**：区间预设由 `NSelect` 改老版 chip 按钮组、「本季」→「本季度」、账户类型列改用 `ACCOUNT_TYPE_MAP` 中文 label、`DonutChart` 统一单位契约（入参「分」内部换算「元」，**顺带修正 `DashboardView` 环图 tooltip 放大 100 倍**）、新增 `money.ts` 的 `fmtCompact` 与 `format.ts` 的 `initials`。**结构决策（用户确认）**：保留新版 6 tab 布局，老版关键信息补进各 tab。`npm run build` 0 错误；浏览器实测 6 tab + 5 种区间预设 + 双视角 + 下钻/返回全部通过。**已确认** |
+| 2026-10-28 | C2 | 搜索筛选按老版 `search.ejs` 重写 `SearchView.vue`，并修后端 `api.v1.dashboard.js` 的老版遗留 bug。**1 个致命缺陷（整页白屏）**：`NDatePicker` 的 `v-model:value` 直接绑 `f.from`/`f.to`（初值 `''` 字符串），naive 只收毫秒时间戳 → `RangeError: Invalid time value` → setup 中断、组件不渲染（dev 下 body 长度 0，生产构建渲染成空壳 `<div class="undefined-date-picker">`）→ 改用项目已有的 `DatePickerWrap.vue`。**11 项行为缺陷**：① **按成员筛选永远返回 0 条** —— 后端 `hasQuery` 用 `Object.values(f).some(v => v !== 1 && v !== 30 ...)` 判断，把 **`memberId === 1`（第一个成员）误判成「没有条件」**（老版遗留 bug），改为显式列举业务筛选项数组判断；② 前端取 `m.id`（成员关系行 ID）而老版用 `m.user_id`（用户 ID），后端 `t.user_id = ?` 匹配的是用户 ID → 改为 `m.user_id`；③ 后端把按日分组放在响应**顶层** `data.groups`，前端读的是 `data.result.groups` → 结果列表恒显示「还没有记录」，改为读 `d.groups`；④ 结果列表改用 `TxnList.vue` 组件（用户确认方案，与明细页同风格，符号/时刻/来源/附件徽标自动对齐）；⑤ 分类下拉补**二级分类层级路径**（`支 · 餐饮/早餐`，一级分类不作选项）；⑥ 补「来源」筛选（全部/手动记账/AI 截图/AI 文字/账单导入/周期账单）；⑦ 排序文案回老版（最新在前/最早在前/金额从大到小/金额从小到大）；⑧ 关键词提示语回老版「关键字：备注 / 商家 / 分类 / 金额」，金额输入框加 `¥` 前缀；⑨ 全部筛选条件**同步到 `route.query`**（刷新/分享可还原）。**A3 全局 CSRF 一并收尾**：新增 `web/src/api/csrfFetch.ts`（自动注入 `X-CSRF-Token`、`credentials: 'include'`、401 自动跳登录、`skipCsrf` 开关），把 `stores/session.ts`（switchLedger/logout）、`views/SettingsView.vue`（createToken/revokeToken）、`views/LoginView.vue` 共 5 处裸 `fetch` 收敛。**验证**：`npm run build` 0 错误；浏览器实测（临时 5112 实例，不触碰用户 5111，测完已停）白屏修复、成员筛选 0 → 1369 条、分类+日期组合 15 笔、来源+金额组合 16 笔、分类名下钻 97 笔、翻页 2/20、`TxnList` 项含时刻/来源 chip/📎 徽标/正确收支符号、令牌创建→吊销全链路通过。**测试数据已清理**（令牌记录已删、临时日志已删）。**注意**：后端 `api.v1.dashboard.js` 有改动，用户 5111 未带 `--watch`，**需重启才生效**。**待确认** |

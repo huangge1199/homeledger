@@ -77,8 +77,22 @@ function buildWhere(ledgerId, f = {}) {
     where.push("strftime('%Y-%m', t.txn_date) = ?");
     params.push(f.month);
   }
-  if (f.from) { where.push('t.txn_date >= ?'); params.push(f.from); }
-  if (f.to) { where.push('t.txn_date <= ?'); params.push(f.to); }
+  /**
+   * 区间筛选：txn_date 是纯日期（TEXT YYYY-MM-DD），txn_time 是独立列（TEXT HH:mm），
+   * 所以这里必须拼接成完整时间戳比较，不然前端带了时分秒会误排数据：
+   *   纯日期 '2026-10-01' vs datetime '2026-10-01 00:00:00' → SQLite 字典序短的小 → 起始日数据全被排除！
+   * 兼容旧前端：传纯日期时自动补 00:00:00 / 23:59:59。
+   */
+  if (f.from) {
+    const full = String(f.from).length === 10 ? `${f.from} 00:00:00` : f.from;
+    where.push("(t.txn_date || ' ' || COALESCE(t.txn_time, '00:00:00')) >= ?");
+    params.push(full);
+  }
+  if (f.to) {
+    const full = String(f.to).length === 10 ? `${f.to} 23:59:59` : f.to;
+    where.push("(t.txn_date || ' ' || COALESCE(t.txn_time, '23:59:59')) <= ?");
+    params.push(full);
+  }
   if (f.minCents) { where.push('t.amount_base_cents >= ?'); params.push(f.minCents); }
   if (f.maxCents) { where.push('t.amount_base_cents <= ?'); params.push(f.maxCents); }
   if (f.keyword) {
