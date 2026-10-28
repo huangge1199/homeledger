@@ -109,7 +109,9 @@ async function submitAdjust() {
   try {
     const dateStr = dayjs(adjustDate.value).format('YYYY-MM-DD')
     const r = await AccountsApi.adjust(accountId.value, Number(adjustBalance.value), dateStr, adjustNote.value)
-    success(`已调整（${(r.delta/100).toFixed(2)} 元）`)
+    // AccountsApi.adjust 返回 axios response.data，即 { ok, data: { id, delta }, message }
+    const delta = Number(r?.data?.delta ?? 0)
+    success(`已调整（${(delta / 100).toFixed(2)} 元）`)
     adjustOpen.value = false
     load()
   } catch (e) {
