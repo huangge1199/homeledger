@@ -44,6 +44,18 @@ export function fmtAmountShort(cents: number | null | undefined): string {
 }
 
 /**
+ * 紧凑金额（对齐老版 src/lib/util.js 的 compactMoney）
+ * 123456700 -> "¥123.46万"；负数保留负号
+ */
+export function fmtCompact(cents: number | null | undefined): string {
+  const n = Math.abs(Number(cents || 0)) / 100
+  const sign = Number(cents) < 0 ? '-' : ''
+  if (n >= 100000000) return `${sign}¥${(n / 100000000).toFixed(2)}亿`
+  if (n >= 10000) return `${sign}¥${(n / 10000).toFixed(2)}万`
+  return `${sign}¥${n.toFixed(2)}`
+}
+
+/**
  * 纯数字金额（无 ¥ 符号，小数位可指定）
  * 对应老版 src/lib/util.js 的 fmtAmount(cents, decimals)，
  * 用于日历格等需要紧凑排布、且自行加 +/- 前缀的场景

@@ -484,8 +484,59 @@ B1 第二轮修复（用户截图反馈后）：
 
 | # | 页面 | 旧文件 | 新文件 | 状态 | 差异备注 |
 |---|---|---|---|---|---|
-| C1 | 报表分析 | `reports.ejs` | `ReportsView.vue` | 待修 | 老版单页多区块；新版 5 tab，需核区间/维度对齐 |
+| C1 | 报表分析 | `reports.ejs` | `ReportsView.vue` | 已确认 | **12 个字段名错配**（数据全空/恒 0）+ 补齐老版 13 项功能；2026-10-28 修复，详见下方 |
 | C2 | 搜索筛选 | `search.ejs` | `SearchView.vue` | 待修 | **当前白屏**：`NDatePicker` 的 `v-model:value` 直接绑 `f.from`/`f.to`（初值 `''` 字符串），naive 只收毫秒时间戳 → `RangeError: Invalid time value`，setup 抛错致组件不渲染。修法：改用 `DatePickerWrap` 组件或内部把字符串↔时间戳互转 |
+
+#### C1 报表分析修复（2026-10-28）
+
+以老版 `src/views/reports.ejs` + `src/routes/reports.js` + `src/lib/charts.js` 为行为基准，重写 `web/src/views/ReportsView.vue`。后端 `api.v1.reports.js` 与老版 `routes/reports.js` 行为一致，**无需改动**；问题几乎全在前端。
+
+**12 个隐性缺陷（字段名错配 → 数据全空 / 恒 0）：**
+
+| # | 前端读法 | 后端实际返回 | 后果 |
+|---|---|---|---|
+| 1 | `cats[].amount_cents` | `cats[].total` | 分类表「金额」列全空；**饼图 `donutData` 同错 → 环图整块空白** |
+| 2 | `cats[].percent` | 无此字段 | 占比列算成 `NaN%` |
+| 3 | `cats[].count` | `cats[].cnt` | 笔数列空 |
+| 4 | `members[].display_name` | `members[].name` | 成员表「成员」列全空 |
+| 5 | `overview.netWorth` | `overview.net` | 净资产卡恒为 ¥0.00 |
+| 6 | `overview.totalAssets` | `overview.assets` | 总资产卡恒为 ¥0.00 |
+| 7 | `overview.totalLiabilities` | `overview.liabilities` | 总负债卡恒为 ¥0.00 |
+| 8 | `accounts[].current_cents` | `accounts[].balance_cents` | 账户表「当前余额」全空 |
+| 9 | `accounts[].init_cents` | `accounts[].initial_cents` | 账户表「初始余额」全空 |
+| 10 | `netWorth[].date` / `.netWorth` | `netWorth[].month` / `.value` | 净资产折线图 X 轴全是 undefined |
+| 11 | `expenseCount.avg`（单位「分」）直接当元用 | 一致 | 笔均支出金额放大 100 倍 |
+| 12 | 图表数据未做「分→元」换算 | 后端给分 | 所有图表 Y 轴数值放大 100 倍 |
+
+**13 项老版功能补齐：**
+
+| # | 老版能力 | 新版现状 | 修法 |
+|---|---|---|---|
+| 1 | 分类下钻（点分类名看二级明细 + 「返回一级」） | `subcats` 后端已返回但前端**完全没用** | 复用后端已有 `?top=` 参数；chips 传一级分类名，排行榜显示 `一级/二级` |
+| 2 | 分类排行榜**横向条形图**（TOP 30） | 只有表格 | 新增 `RankBars.vue` 组件（序号 + 名称 + 条 + 金额） |
+| 3 | 支出/收入构成环图带**中心金额** | 环图无中心值 | `DonutChart` 加 `centerValue` / `centerTitle`，用紧凑金额（¥11.68万） |
+| 4 | 环图配套**图例列表**（色点 + 名称 + 占比条 + 百分比 + 金额） | 无 | 新增 `DonutLegend.vue` 组件 |
+| 5 | 同期对比**含环比百分比**（↑/↓ x.x%） | 只有三个数字 | 改为老版表格结构（区间/支出/收入/结余/环比），环比 = (本期-上期)/上期 |
+| 6 | 结余卡显示**储蓄率** | 无 | `hint` 补 `储蓄率 X%` |
+| 7 | 笔均支出卡显示「**N 笔 · 记账 M 天**」 | 只有「单笔均值」 | `hint` 补笔数与记账天数（`days` 里 `count>0` 的天数） |
+| 8 | 每日支出走势标注「**支出最高的一天**」 | 无 | 从 `days` 求最大值，标题右侧展示 |
+| 9 | 成员消费对比用**头像 + 进度条 + 首字母** | 表格 | 补头像（成员色 + 首字母）+ 支出进度条 |
+| 10 | 账户余额一览有「**占净资产 %**」列 | 无 | 补该列（分母 = 各账户余额绝对值之和，对齐老版 `netAbs`） |
+| 11 | 净资产走势图下方有当前净资产/总资产/总负债 | 挪到账户 tab | 趋势 tab 内补一行摘要 |
+| 12 | X 轴用**短标签**（`11月` / `10-01`） | 全是 `2025-11` 长标签 | 新增 `utils/format.ts` 的 `monthShort()` |
+| 13 | 区间筛选**由 URL 驱动**（刷新/分享可还原） | 刷新后区间丢失 | 区间/视角/下钻全部以 `route.query` 为唯一数据源；预设切换会自动清理无关参数 |
+
+**体验细节：**
+
+- 区间预设从 `NSelect` 改为老版的 **chip 按钮组**（`NRadioGroup`），切换更直观
+- 「本季」改为老版的「**本季度**」
+- 账户表「类型」列改用 `ACCOUNT_TYPE_MAP` 的中文 label（原为英文 `cash`/`credit`）
+- `DonutChart` 组件统一单位契约：**入参为「分」，组件内部换算成「元」**给 echarts（同步修正 `DashboardView` 的环图 tooltip 放大 100 倍问题）
+- 新增 `money.ts` 的 `fmtCompact()`（紧凑金额）、`format.ts` 的 `initials()`（成员首字母）
+
+**结构决策（用户确认）：** 保留新版的 6 个 tab 布局，不改回老版单页平铺；老版关键信息补进各对应 tab。
+
+**验证：** `npm run build` 0 错误；浏览器实测 6 个 tab + 5 种区间预设 + 收入/支出视角 + 分类下钻/返回一级全部通过（金额、占比、笔数、净资产、账户余额、环比均正确渲染）。**已确认** |
 
 ---
 
@@ -726,12 +777,14 @@ B1 第二轮修复（用户截图反馈后）：
 | P0 | A1、B1、B2、B3 | 高频入口，影响全局导航与记账闭环 ✅ 已确认 |
 | P0 | F4 设置 | 老版 25KB，功能最全，最易漏 ✅ 已确认 |
 | P1 | D1、D5、B6、B7 | 资产与订阅是核心能力 ✅ 已确认 |
-| P1 | C1 报表 | 图表/区间逻辑复杂 ← **下一项** |
+| P1 | C1 报表 | 图表/区间逻辑复杂 ✅ 已确认 |
+| P1 | C2 搜索筛选 | **当前白屏**（`NDatePicker` 绑字符串致 setup 抛错）← **下一项** |
 | P2 | D2~D7、E1~E4 | 常规 CRUD |
 | P2 | F1~F3、F5 | 系统页 |
 | P3 | G1~G7 | 裸页，改动相对独立 |
 
-> 尚待确认：A3（全局 CSRF，用户决策留到 C2 阶段一并处理）、C2（`/search` 白屏，同上）。
+> 尚待确认：A3（全局 CSRF，用户决策留到 C2 阶段一并处理）。
+> **P0/P1 已全部完成**（除 C2），下一项按顺序为 C2。
 
 ---
 
@@ -760,3 +813,4 @@ B1 第二轮修复（用户截图反馈后）：
 | 2026-10-27 | D5 | 订阅扣费按老版 `subscriptions.ejs`（307 行）+ `routes/subscriptions.js`（222 行）重写 `SubscriptionsView.vue`，补 `api.v1.subscriptions.js` 的 JOIN 与审计。**2 个隐性缺陷**：① **3 张统计卡全部为 0** —— 前端读 `overview.monthly`/`yearly`/`activeCount`，后端 `subs.overview()` 实际返回 `monthlyTotal`/`annualTotal`/`live[]`，**字段名全不匹配**（已全部改正，卡片从 3 张补成老版 4 张：生效中订阅/每月固定支出/每年合计/本月待扣·已扣）；② `GET /subscriptions` 未 JOIN accounts/categories → **卡片上「支付账户」永远为空**（已补 LEFT JOIN + `charge_count`）。**16 项功能补齐**：顶部说明卡、按状态分 4 组（生效中/试用中/已暂停/已取消，各带数量）、卡片 chips 补「到期自动记账·仅提醒」+「试用至 X」、金额右侧补「**周期 · 月均 ¥X**」换算、详情行补「上次扣费/分类/已自动记账 N 笔/全年 ¥X」+ 到期标签、3 天内到期标红、备注行、**「管理页 ↗」外链**、按钮文案回老版（立即扣费一期/跳过本期/标记已取消）、**历史扣费记录**卡、表单补币种/管理页地址、周期补齐 7 种（缺每季每半年）、周期联动（不周期隐藏下次扣费日 + 固定到期日改标签「到期日」）、状态只 3 项（已取消的编辑时不复活）。**后端补 5 条审计日志**（update/charge/toggle/cancel/delete，老版全有、新版全无）。**跨页面增强**：`money.ts` 新增 `currencySymbol`/`fmtAmountWith`，`AmountDisplay` 加 `currency` prop（订阅的 USD/EUR 金额原来被硬编码成 ¥），`StatCard` 加 `raw` prop（计数类指标不再被当「分」格式化）。`npm run build` 0 错误，`node --check` + 浏览器实测通过（含创建/扣费/跳过/取消/恢复全链路 + 审计日志 DB 校验 + **测试数据已清理**）。**已确认** |
 | 2026-10-27 | D1 | 账户管理按老版 `accounts.ejs`（183 行）重写 `AccountsView.vue` + 补 `api.v1.accounts.js` 归档字段。**5 个隐性缺陷**：① 前端判 `a.flow?.in` 但后端字段是 `flow.out`/`flow.inflow`（**无 `flow.in`**）→ **近 30 天流水永不显示**（已改老版口径「近30天 −out / +inflow」并移到金额右侧）；② 总负债多套一层 `-Math.abs()` → **显示成负数**（老版是正数，已去掉）；③ 账户副行（币种·尾号·账单日·还款日）**全丢**（已补 `accountMeta()`）；④ 分组用 `Object.keys().sort()` → **字母序**，老版是 `ACCOUNT_TYPES` 定义顺序（已改）；⑤ 后端 `archived` 未补 `flow`/`typeLabel`/`isLiability`（已补）。**14 项功能补齐**：统计卡 3 条 hint 副标题、净资产负数标红、「共 N 个在用账户，M 个已停用」+「＋ 添加账户」、每组卡头「合计 ¥X」、行内补**「明细」**和**「余额调整」**两个操作（老版有、新版缺）、账户行改上下两行且操作按钮**常显**（原 `display:none` 靠 hover，移动端点不到）、负债类账户余额也标红、币种补齐 7 种（缺 GBP/SGD）且默认取站点本位币、额度/账单日/还款日**去掉 credit 条件**（老版无条件显示）、空态与已停用卡文案回老版、删除确认文案回老版。**术语统一**为老版「停用」。**后端**：`GET /accounts` 的 archived 补 3 字段。`npm run build` 0 错误，`node --check` + 浏览器实测（含创建外币账户→编辑存账期→余额调整→停用→删除拦截→**测试数据已清理**）通过。**遗留**：`AccountDetailView`（D2）余额调整提示语 `r.delta` 应为 `r.data.delta`，留待 D2。**已确认** |
 | 2026-10-28 | B6-4 | **修复「AI 识别丢失消费时刻」**（用户全程旁观实测发现：识别时忽略时间、没存库、后续操作全看不到具体时间）。`txn_time` 字段在 B1 阶段已建好，但 **AI 识别这条链路从未碰过它**，共 **5 处断点**：① `SYSTEM_PROMPT` 根本没要求输出时刻（补第 5 条要求 + 输出格式示例加 `txn_time`）；② `normalizeItem` 丢弃模型输出的时刻（新增 `normalizeTime()` 归一化 `HH:mm`，兼容 `12：30`/`12:30:05`/`8:05`，非法值归空）；③ 规则引擎 `parseTextByRules` 不抽时间（新增 `extractTime()`，支持 `12:30`/`12点30分`/`下午3点`+12/`凌晨12点`→00:00）；④ `POST /ai/confirm` 与 `POST /ai/chat` 入库都漏传 `txn_time`（两处都补）；⑤ 前端 `AiView.vue` 无处可改无处可传（`Draft` 补字段 + 草稿卡新增「时刻」`NTimePicker` + `buildItems` 带时刻 + **文字快速记账单笔跳转 query 补 `txn_time`**）。**连带修 2 处**：`TxnFormView.vue` 解析 `route.query` 时没读 `txn_time`（AI 文字记账跳过来时表单时刻为空）；`NTimePicker` 去掉与 `value` 混用的 `formatted-value`。**验证**：`npm run build` 0 错误、`node --check` 通过、解析逻辑 14 组用例全对、入库/读取链路自检通过；**浏览器端到端实测**（临时在 5112 端口起独立实例，不触碰用户正在运行的 5111，测完已停掉）：文字记账「午饭 35 支付宝 12:30」→ 跳转带 `txn_time=12:30` → 表单预填 `12:30:00` → 入库 `12:30:00` → 列表/详情均显示时刻；截图识别含 `12:45` 的收据 → 草稿卡时刻自动预填 `12:45` → 入库 `12:45:00` → 列表显示 `12:45:00`。**测试数据已清理**（交易回到 2710、附件回到 4）。**注意**：后端进程未带 `--watch`，用户需重启 5111 才会加载本次后端改动。**已确认** |
+| 2026-10-28 | C1 | 报表分析按老版 `reports.ejs` + `routes/reports.js` + `lib/charts.js` 重写 `ReportsView.vue`，**后端 `api.v1.reports.js` 与老版行为一致、无需改动**，问题几乎全在前端。**12 个隐性缺陷（字段名错配 → 数据全空/恒 0）**：① `cats[].amount_cents` → 实为 `total`（分类表金额列全空，**饼图同错导致环图整块空白**）；② `cats[].percent` 后端无此字段 → 占比显示 `NaN%`；③ `cats[].count` → 实为 `cnt`；④ `members[].display_name` → 实为 `name`；⑤ `overview.netWorth` → 实为 `net`（净资产卡恒 ¥0.00）；⑥ `overview.totalAssets` → 实为 `assets`；⑦ `overview.totalLiabilities` → 实为 `liabilities`；⑧ `accounts[].current_cents` → 实为 `balance_cents`；⑨ `accounts[].init_cents` → 实为 `initial_cents`；⑩ `netWorth[].date`/`.netWorth` → 实为 `.month`/`.value`（净资产折线图 X 轴全 undefined）；⑪ `expenseCount.avg` 是「分」却按「元」用 → 笔均支出放大 100 倍；⑫ 图表数据未做「分→元」换算 → 所有图表 Y 轴放大 100 倍。**13 项老版功能补齐**：分类下钻（复用后端已有 `?top=`，chips 传一级分类名 + 「返回一级」）、**分类排行榜横向条形图**（新增 `RankBars.vue`，TOP 30）、环图中心金额、**环图图例列表**（新增 `DonutLegend.vue`）、同期对比改老版表格结构并补**环比百分比**、结余卡补储蓄率、笔均支出卡补「N 笔 · 记账 M 天」、每日走势标注「支出最高的一天」、成员对比补头像+进度条+首字母、账户表补「占净资产 %」列、净资产走势补摘要行、X 轴短标签（新增 `utils/format.ts` 的 `monthShort`）、**区间筛选改为 URL 驱动**（刷新/分享可还原）。**体验细节**：区间预设由 `NSelect` 改老版 chip 按钮组、「本季」→「本季度」、账户类型列改用 `ACCOUNT_TYPE_MAP` 中文 label、`DonutChart` 统一单位契约（入参「分」内部换算「元」，**顺带修正 `DashboardView` 环图 tooltip 放大 100 倍**）、新增 `money.ts` 的 `fmtCompact` 与 `format.ts` 的 `initials`。**结构决策（用户确认）**：保留新版 6 tab 布局，老版关键信息补进各 tab。`npm run build` 0 错误；浏览器实测 6 tab + 5 种区间预设 + 双视角 + 下钻/返回全部通过。**已确认** |

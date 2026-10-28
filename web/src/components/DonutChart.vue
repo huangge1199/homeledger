@@ -13,6 +13,7 @@ provide(THEME_KEY, 'light')
 
 interface Item { name: string; value: number; color?: string }
 interface Props {
+  /** 各分项金额，单位「分」（与后端 amount_base_cents 一致，组件内部换算成元给 echarts） */
   items: Item[]
   /** 圆环厚度（像素） */
   thickness?: number
@@ -53,7 +54,8 @@ const option = computed(() => {
         itemStyle: { borderColor: '#fff', borderWidth: 2 },
         label: { show: false },
         labelLine: { show: false },
-        data: props.items.map((it) => ({ name: it.name, value: it.value })),
+        // 入参单位是「分」，echarts 轴/tooltip 单位是「元」，这里统一换算
+        data: props.items.map((it) => ({ name: it.name, value: Math.abs(Number(it.value) || 0) / 100 })),
       },
     ],
   }
