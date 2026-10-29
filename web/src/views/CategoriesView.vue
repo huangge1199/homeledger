@@ -78,12 +78,14 @@ async function onSubmit() {
     return
   }
   submitting.value = true
+  // 兜底：自定义颜色不是合法 hex 时回落默认灰
+  const color = /^#[0-9a-fA-F]{6}$/.test(form.value.color) ? form.value.color : '#8c8c8c'
   try {
     if (editing.value) {
       await CategoriesApi.update(Number(editing.value.id), {
         name: form.value.name.trim(),
         icon: form.value.icon,
-        color: form.value.color,
+        color,
       })
       success('已更新')
     } else {
@@ -92,7 +94,7 @@ async function onSubmit() {
         kind: form.value.kind,
         parent_id: form.value.parent_id || null,
         icon: form.value.icon,
-        color: form.value.color,
+        color,
       })
       success('已创建')
     }
@@ -120,6 +122,7 @@ async function onDelete(c: any) {
   }
 }
 
+const CUSTOM_COLOR = '__custom'
 const colorOptions = [
   { label: '🟠 橙', value: '#fa8c16' },
   { label: '🟢 绿', value: '#52c41a' },
@@ -130,7 +133,23 @@ const colorOptions = [
   { label: '🟡 黄', value: '#faad14' },
   { label: '🟦 青', value: '#13c2c2' },
   { label: '⚪ 灰', value: '#8c8c8c' },
+  { label: '🎨 自定义', value: CUSTOM_COLOR },
 ]
+
+// 预设色下拉 + 自定义输入兜底：选中「自定义」时展示 hex 输入框
+const isPresetColor = computed(() => colorOptions.some((o) => o.value === form.value.color))
+const colorValue = computed({
+  get: () => (isPresetColor.value ? form.value.color : CUSTOM_COLOR),
+  set: (v: string) => {
+    if (v !== CUSTOM_COLOR) form.value.color = v
+  },
+})
+
+// 顶部提示卡统计 + 一级分类合计（含子分类）
+const topCount = computed(() => data.value.expense.length + data.value.income.length)
+const subCount = computed(() => data.value.flat.filter((c: any) => c.parent_id).length)
+const catTotal = (c: any) =>
+  Number(c.stat?.total || 0) + (c.children || []).reduce((s: number, cc: any) => s + Number(cc.stat?.total || 0), 0)
 </script>
 
 <template>
@@ -141,6 +160,10 @@ const colorOptions = [
         <NButton @click="openCreate('income')" type="success" ghost>＋ 新建收入分类</NButton>
       </template>
     </PageHead>
+
+    <NAlert type="info" :bordered="false" class="notice">
+      系统内置了 {{ topCount }} 个一级分类、{{ subCount }} 个二级分类，覆盖市面主流记账场景。你可以自由新建自己的分类；内置分类不可修改，但可以归档掉不用的。
+    </NAlert>
 
     <NSpin :show="loading">
       <NGrid :cols="2" :x-gap="12" :y-gap="12" responsive="screen" :item-responsive="true">
@@ -169,7 +192,7 @@ const colorOptions = [
                       <NTag v-if="c.is_system" :bordered="false" size="tiny" type="info">系统</NTag>
                       <NTag v-if="c.is_archived" :bordered="false" size="tiny" type="warning">归档</NTag>
                       <NText depth="3" class="cnt">{{ c.stat?.cnt || 0 }} 笔</NText>
-                      <NText depth="2" class="total">{{ fmtAmount(c.stat?.total || 0) }}</NText>
+                      <NText depth="2" class="total">合计 {{ fmtAmount(catTotal(c)) }}</NText>
                     </div>
                   </template>
                   <template #header-extra>
@@ -242,7 +265,7 @@ const colorOptions = [
                       <span class="name">{{ c.name }}</span>
                       <NTag v-if="c.is_system" :bordered="false" size="tiny" type="info">系统</NTag>
                       <NText depth="3" class="cnt">{{ c.stat?.cnt || 0 }} 笔</NText>
-                      <NText depth="2" class="total">{{ fmtAmount(c.stat?.total || 0) }}</NText>
+                      <NText depth="2" class="total">合计 {{ fmtAmount(catTotal(c)) }}</NText>
                     </div>
                   </template>
                   <template #header-extra>
@@ -319,8 +342,17 @@ const colorOptions = [
             <NInput v-model:value="form.icon" maxlength="4" placeholder="🏷️" />
           </NFormItem>
           <NFormItem label="颜色">
-            <NSelect v-model:value="form.color" :options="colorOptions" />
-            <span class="color-preview" :style="{ background: form.color }"></span>
+            <div class="color-field">
+              <NSelect v-model:value="colorValue" :options="colorOptions" />
+              <NInput
+                v-if="!isPresetColor"
+                v-model:value="form.color"
+                maxlength="7"
+                placeholder="#4f7cff"
+                class="color-input"
+              />
+              <span class="color-preview" :style="{ background: form.color }"></span>
+            </div>
           </NFormItem>
           <NAlert v-if="editing?.is_system" type="warning" :show-icon="true" class="tip">
             系统内置分类只能改名称、图标、颜色，不能删除。
@@ -359,4 +391,8 @@ const colorOptions = [
 .hint { font-size: 12px; }
 .color-preview { display: inline-block; width: 20px; height: 20px; border-radius: 4px; margin-left: 8px; vertical-align: middle; border: 1px solid var(--hl-border); }
 .tip { margin-top: 12px; }
+.notice { margin-bottom: 12px; }
+.color-field { display: flex; align-items: center; gap: 8px; width: 100%; }
+.color-field .n-select { flex: 1; }
+.color-input { width: 120px; }
 </style>
