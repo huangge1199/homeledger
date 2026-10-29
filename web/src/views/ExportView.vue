@@ -1,16 +1,19 @@
 <script setup lang="ts">
 import { computed, h, onMounted, ref } from 'vue'
+import dayjs from 'dayjs'
 import {
-  NCard, NButton, NSpace, NText, NTag, NCheckbox, NSelect, NSpin,
-  NDataTable, NAlert, NEmpty, NForm, NFormItem, useMessage, type DataTableColumns,
+  NCard, NButton, NSpace, NText, NTag, NSelect, NSpin, NDataTable, NAlert,
+  NForm, NFormItem, NDivider, useMessage, type DataTableColumns,
 } from 'naive-ui'
 import AppShell from '@/layouts/AppShell.vue'
 import PageHead from '@/components/PageHead.vue'
 import Empty from '@/components/Empty.vue'
-import { AdminApi } from '@/api/modules'
+import DatePickerWrap from '@/components/DatePickerWrap.vue'
+import { AdminApi, AccountsApi } from '@/api/modules'
 import { errorMessage } from '@/api/client'
 import { useFlash } from '@/composables/useFlash'
 import { useSessionStore } from '@/stores/session'
+import { TXN_TYPES } from '@/utils/txnTypes'
 
 const session = useSessionStore()
 const { success, error: toastError } = useFlash()
@@ -18,10 +21,22 @@ const message = useMessage()
 
 const loading = ref(true)
 const years = ref<string[]>([])
-const year = ref<number>(new Date().getFullYear())
-const fmt = ref<'csv' | 'json' | 'excel'>('csv')
-const inclTransfer = ref(true)
-const inclDeleted = ref(false)
+const accounts = ref<any[]>([])
+
+const today = dayjs().format('YYYY-MM-DD')
+const from = ref(`${dayjs().format('YYYY')}-01-01`)
+const to = ref(today)
+const txnType = ref('')
+const accountId = ref<number | null>(null)
+
+const typeOptions = [
+  { label: '全部类型', value: '' },
+  ...TXN_TYPES.map((t) => ({ label: t.label, value: t.key as string })),
+]
+const accountOptions = computed(() => [
+  { label: '全部账户', value: null as unknown as number },
+  ...accounts.value.map((a: any) => ({ label: a.name, value: a.id as number })),
+])
 
 async function load() {
   if (!session.currentLedger) return
@@ -29,9 +44,8 @@ async function load() {
   try {
     const d = await AdminApi.exportYears()
     years.value = d.years || []
-    if (years.value.length && !years.value.includes(String(year.value))) {
-      year.value = Number(years.value[0])
-    }
+    const a = await AccountsApi.list()
+    accounts.value = a?.accounts || []
   } catch (e) {
     toastError(errorMessage(e, '加载失败'))
   } finally {
@@ -41,30 +55,32 @@ async function load() {
 
 onMounted(load)
 
-function buildUrl() {
+/** 老版实存接口：/export/csv?from=&to=&type=&account_id= */
+function exportCsv(f = from.value, t = to.value) {
   const params = new URLSearchParams()
-  params.set('year', String(year.value))
-  params.set('format', fmt.value === 'excel' ? 'xlsx' : fmt.value)
-  if (inclTransfer.value) params.set('incl_transfer', '1')
-  if (inclDeleted.value) params.set('incl_deleted', '1')
-  return `/export?${params.toString()}`
+  params.set('from', f)
+  params.set('to', t)
+  if (txnType.value) params.set('type', txnType.value)
+  if (accountId.value) params.set('account_id', String(accountId.value))
+  window.open(`/export/csv?${params.toString()}`, '_blank')
+  success(`正在导出 ${f} ~ ${t} 的账单 CSV`)
 }
 
-function doExport() {
-  if (!year.value) { message.warning('请选择年度'); return }
-  window.open(buildUrl(), '_blank')
-  success('已生成下载')
+/** 老版实存接口：/export/json（当前账本全量结构化数据） */
+function exportJson() {
+  window.open('/export/json', '_blank')
+  success('正在导出完整数据 JSON')
 }
 
 const yearColumns = computed<DataTableColumns>(() => [
-  { title: '年份', key: 'y', width: 80 },
+  { title: '年份', key: 'y', width: 90 },
   {
-    title: '快捷导出', key: 'shortcut', width: 240,
+    title: '快捷导出',
+    key: 'shortcut',
     render: (r: any) => h(NSpace, { size: 'small' }, {
       default: () => [
-        h(NButton, { size: 'tiny', onClick: () => { year.value = Number(r.y); fmt.value = 'csv'; doExport() } }, { default: () => 'CSV' }),
-        h(NButton, { size: 'tiny', onClick: () => { year.value = Number(r.y); fmt.value = 'json'; doExport() } }, { default: () => 'JSON' }),
-        h(NButton, { size: 'tiny', onClick: () => { year.value = Number(r.y); fmt.value = 'excel'; doExport() } }, { default: () => 'Excel' }),
+        h(NButton, { size: 'tiny', onClick: () => exportCsv(`${r.y}-01-01`, `${r.y}-12-31`) }, { default: () => `导出 ${r.y} 年 CSV` }),
+        h(NButton, { size: 'tiny', onClick: () => exportJson() }, { default: () => '完整 JSON' }),
       ],
     }),
   },
@@ -109,57 +125,62 @@ async function onRestoreFile(e: Event) {
 
 <template>
   <AppShell>
-    <PageHead title="导出数据" sub="按年导出 CSV / JSON / Excel，导入到 Excel / 第三方记账软件" />
+    <PageHead title="导出备份" sub="导出账单 CSV / 完整 JSON，数据库备份与恢复">
+      <template #actions>
+        <NText depth="3" style="font-size: 12px">当前账本：{{ session.currentLedger?.name }}</NText>
+      </template>
+    </PageHead>
 
     <NSpin :show="loading">
-      <NCard :bordered="true" class="form-card" title="📦 导出配置">
-        <NForm label-placement="left" label-width="100" :model="{ year, fmt }">
-          <NFormItem label="年份">
-            <NSelect
-              v-model:value="year"
-              :options="years.map(y => ({ label: y, value: Number(y) }))"
-              placeholder="选择年度"
-              style="width: 200px"
-            />
-          </NFormItem>
-          <NFormItem label="格式">
-            <NSelect
-              v-model:value="fmt"
-              :options="[
-                { label: 'CSV（通用电子表格）', value: 'csv' },
-                { label: 'JSON（程序读取）', value: 'json' },
-                { label: 'Excel（xlsx）', value: 'excel' },
-              ]"
-              style="width: 280px"
-            />
-          </NFormItem>
-          <NFormItem label="包含">
-            <NSpace size="large">
-              <NCheckbox v-model:checked="inclTransfer">包含转账 / 中性记录</NCheckbox>
-              <NCheckbox v-model:checked="inclDeleted">包含已删除交易</NCheckbox>
-            </NSpace>
-          </NFormItem>
-        </NForm>
-        <NSpace style="margin-top: 12px">
-          <NButton type="primary" @click="doExport">📥 下载 {{ year }} 年</NButton>
-        </NSpace>
-      </NCard>
+      <div class="grid-2">
+        <!-- 导出账单 CSV -->
+        <NCard :bordered="true" title="📤 导出账单（CSV）">
+          <NText depth="3" class="hint">
+            导出为 UTF-8 CSV，可直接用 Excel / WPS 打开，也可用于迁移到其他记账软件。
+          </NText>
+          <NForm label-placement="left" label-width="86" class="csv-form">
+            <NFormItem label="起始日期">
+              <DatePickerWrap v-model="from" type="date" />
+            </NFormItem>
+            <NFormItem label="结束日期">
+              <DatePickerWrap v-model="to" type="date" />
+            </NFormItem>
+            <NFormItem label="类型（可选）">
+              <NSelect v-model:value="txnType" :options="typeOptions" />
+            </NFormItem>
+            <NFormItem label="账户（可选）">
+              <NSelect v-model:value="accountId" :options="accountOptions" />
+            </NFormItem>
+          </NForm>
+          <NButton type="primary" @click="exportCsv()">📥 下载 CSV</NButton>
+        </NCard>
 
+        <!-- JSON + 数据库备份 -->
+        <NCard :bordered="true" title="🧾 导出完整数据（JSON）">
+          <NText depth="3" class="hint">
+            包含当前账本的账户、分类、交易、预算、周期账单、借贷、储蓄目标等全部结构化数据，适合长期归档或二次开发。
+          </NText>
+          <NButton type="primary" class="mt12" @click="exportJson">下载 JSON</NButton>
+
+          <NDivider />
+          <h3 class="sub-title">💾 数据库文件备份</h3>
+          <NText depth="3" class="hint">
+            下载整个 SQLite 数据库文件。<strong>最推荐的做法</strong>：直接在 NAS 上对 <code>data/</code> 目录做快照或定时复制——整个数据目录就包含了会计数据和账单截图。
+          </NText>
+          <NSpace class="mt12">
+            <NButton v-if="isAdmin" @click="downloadDbBackup">下载 .db 数据库</NButton>
+            <NText v-else depth="3" class="hint">仅管理员可下载数据库文件。</NText>
+          </NSpace>
+        </NCard>
+      </div>
+
+      <!-- 有数据的年度 -->
       <NCard :bordered="true" class="hist-card" title="📅 有数据的年度">
         <Empty v-if="!loading && !years.length" icon="📅" title="还没有任何交易" />
         <NDataTable v-else :columns="yearColumns" :data="years.map(y => ({ y }))" :pagination="false" size="small" />
       </NCard>
 
-      <NCard :bordered="true" class="info-card" title="💾 数据库文件备份">
-        <NText depth="3" class="hint">
-          下载整个 SQLite 数据库文件。<strong>最推荐的做法</strong>：直接在 NAS 上对 <code>data/</code> 目录做快照或定时复制——整个数据目录就包含了会计数据和账单截图。
-        </NText>
-        <NSpace style="margin-top: 12px">
-          <NButton v-if="isAdmin" type="primary" @click="downloadDbBackup">下载 .db 数据库</NButton>
-          <NText v-else depth="3" class="hint">仅管理员可下载数据库文件。</NText>
-        </NSpace>
-      </NCard>
-
+      <!-- 恢复 -->
       <NCard v-if="isAdmin" :bordered="true" class="info-card" title="♻️ 从备份恢复">
         <template #header-extra>
           <NTag type="warning" size="small" :bordered="false">高风险操作</NTag>
@@ -174,6 +195,17 @@ async function onRestoreFile(e: Event) {
         <input ref="restoreInput" type="file" accept=".db,application/octet-stream" style="display: none" @change="onRestoreFile" />
       </NCard>
 
+      <!-- NAS 建议 -->
+      <NCard :bordered="true" class="info-card" title="NAS 部署与备份建议">
+        <div class="nas">
+          <div>1. 用 Docker Compose 部署时把 <code>./data</code> 挂到 NAS 的共享文件夹，例如 <code>/vol1/1000/docker/homeledger/data</code></div>
+          <div>2. 在飞牛 NAS 的「备份 / 快照」里对这个目录设置定时任务，例如每天凌晨 3 点</div>
+          <div>3. 需要迁移时，把整个 <code>data</code> 目录拷到新设备的同一位置即可，无需额外导入导出</div>
+          <div>4. 只恢复账目录数据、不要截图时，可以只拷 <code>homeledger.db</code></div>
+        </div>
+      </NCard>
+
+      <!-- 字段说明 -->
       <NCard :bordered="true" class="info-card" title="📋 导出字段说明">
         <NText depth="3" style="line-height: 1.8">
           每行包含：<strong>日期 / 类型 / 金额 / 币种 / 账户 / 转入账户 / 分类 / 报销 / 商户 / 备注 / 标签 / 成员 / 来源 / 状态</strong>。
@@ -181,16 +213,19 @@ async function onRestoreFile(e: Event) {
           适合用 Excel / Numbers / 第三方记账软件打开，字段已与支付宝 / 微信 / 网易有钱等通用格式对齐。
         </NText>
       </NCard>
-
-      <NAlert type="info" :show-icon="true" style="margin-top: 12px">
-        导出走的是 SSR 端 <code>/export</code> 接口（向后兼容），所以格式与之前的完全一致。
-      </NAlert>
     </NSpin>
   </AppShell>
 </template>
 
 <style scoped>
-.form-card { margin-bottom: 12px; }
-.hist-card { margin-bottom: 12px; }
-.info-card { margin-bottom: 12px; }
+.grid-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+@media (max-width: 900px) { .grid-2 { grid-template-columns: 1fr; } }
+.csv-form { margin-top: 12px; }
+.hint { font-size: 12px; line-height: 1.6; }
+.sub-title { font-size: 14px; margin: 0 0 6px; }
+.mt12 { margin-top: 12px; }
+.hist-card { margin-top: 12px; }
+.info-card { margin-top: 12px; }
+.nas { line-height: 2; font-size: 12px; color: var(--hl-muted); }
+code { background: var(--hl-card-2, #f7f8fb); padding: 1px 4px; border-radius: 3px; }
 </style>
