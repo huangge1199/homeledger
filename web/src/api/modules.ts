@@ -208,9 +208,9 @@ export const AdminApi = {
   // import
   importJobs: () => api.get('/admin/import/jobs').then((r) => r.data.data),
   importPreview: (dataUrl: string, fileName: string) =>
-    api.post('/admin/import/preview', { dataUrl, fileName }, { headers: { 'Content-Type': 'application/json' } }).then((r) => r.data),
+    api.post('/admin/import/preview', { dataUrl, fileName }, { headers: { 'Content-Type': 'application/json' } }).then((r) => r.data.data),
   importCommit: (payload: Record<string, unknown>) =>
-    api.post('/admin/import/commit', payload, { headers: { 'Content-Type': 'application/json' } }).then((r) => r.data),
+    api.post('/admin/import/commit', payload, { headers: { 'Content-Type': 'application/json' } }).then((r) => r.data.data),
   exportYears: () => api.get('/admin/export/years').then((r) => r.data.data),
   // backup
   backup: () => api.post('/admin/backup/db').then((r) => r.data),
