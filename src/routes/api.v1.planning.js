@@ -459,7 +459,7 @@ debts.delete('/:id(\\d+)', auth.requireLogin, auth.requireLedgerWrite, api.async
 
 /* ===================================================== 储蓄目标 ===================================================== */
 /** goals 实际 schema: id, ledger_id, name, icon, target_cents, saved_cents, account_id, target_date, status, note, created_at
- *  status: 'active' | 'archived' | 'achieved'
+ *  status: 'active' | 'done' | 'archived'（兼容历史 achieved，读取/编辑时按已达成处理）
  */
 goals.get('/', auth.requireLogin, api.asyncHandler((req, res) => {
   const ledger = res.locals.ledger;
@@ -468,7 +468,7 @@ goals.get('/', auth.requireLogin, api.asyncHandler((req, res) => {
   const items = all(
     `SELECT g.*, a.name AS account_name, a.icon AS account_icon
      FROM goals g LEFT JOIN accounts a ON a.id = g.account_id
-     WHERE g.ledger_id = ? ORDER BY g.status ASC, g.id DESC`, ledgerId);
+     WHERE g.ledger_id = ? ORDER BY CASE WHEN g.status = 'active' THEN 0 ELSE 1 END, g.id ASC`, ledgerId);
   api.ok(res, { items });
 }));
 
@@ -476,15 +476,18 @@ goals.post('/', auth.requireLogin, auth.requireLedgerWrite, api.asyncHandler((re
   const ledgerId = Number(res.locals.ledger.id);
   const target = u.parseAmountToCents(req.body.target_amount);
   if (!target) return api.badRequest(res, '请填写目标金额');
-  const status = ['active', 'archived', 'achieved'].includes(req.body.status) ? req.body.status : 'active';
+  const saved = Math.max(0, u.parseAmountToCents(req.body.saved_amount));
+  const status = ['active', 'done', 'achieved', 'archived'].includes(req.body.status) ? req.body.status : 'active';
+  const finalStatus = saved >= target && status === 'active' ? 'done' : status;
   const info = run(
     `INSERT INTO goals (ledger_id, name, icon, target_cents, saved_cents, account_id, target_date, status, note, created_at)
-     VALUES (?,?,?,?,0,?,?,?,?,?)`,
+     VALUES (?,?,?,?,?,?,?,?,?,?)`,
     ledgerId, String(req.body.name || '').slice(0, 30) || '储蓄目标', req.body.icon || '🎯',
     target,
+    saved,
     req.body.account_id ? Number(req.body.account_id) : null,
     req.body.target_date || null,
-    status, req.body.note || '', nowStr()
+    finalStatus, req.body.note || '', nowStr()
   );
   auth.audit(req, 'goal.create', { entity: 'goal', entityId: info.lastInsertRowid, ledgerId });
   api.created(res, { id: info.lastInsertRowid });
@@ -508,13 +511,45 @@ goals.post('/:id(\\d+)/deposit', auth.requireLogin, auth.requireLedgerWrite, api
     source: 'manual',
   });
   run('UPDATE goals SET saved_cents = saved_cents + ? WHERE id = ?', amount, id);
-  // 达成检测
+  // 达成检测：状态统一写 'done'（与老版页面/历史数据一致），并在首次达成时通知账本所有可写成员
   const newSaved = Number(g.saved_cents || 0) + amount
   if (newSaved >= Number(g.target_cents)) {
-    run(`UPDATE goals SET status = 'achieved' WHERE id = ? AND status = 'active'`, id)
+    run(`UPDATE goals SET status = 'done' WHERE id = ? AND status = 'active'`, id)
+    if (g.status === 'active') {
+      for (const uid of auth.ledgerWriterIds(ledgerId)) {
+        auth.notify(uid, { kind: 'success', ledgerId, title: `🎉 储蓄目标达成：${g.name}`, link: '/goals' });
+      }
+    }
   }
   auth.audit(req, 'goal.deposit', { entity: 'goal', entityId: id, ledgerId, detail: String(amount) });
   api.ok(res, { txn_id: tId });
+}));
+
+/** 编辑目标：直接改字段，不做「新建 + 迁移 + 删除」（老版没有编辑，新版补齐时避免副作用） */
+goals.put('/:id(\\d+)', auth.requireLogin, auth.requireLedgerWrite, api.asyncHandler((req, res) => {
+  const ledgerId = Number(res.locals.ledger.id);
+  const id = Number(req.params.id);
+  const g = get('SELECT * FROM goals WHERE id = ? AND ledger_id = ?', id, ledgerId);
+  if (!g) return api.notFound(res, '目标不存在');
+  const target = req.body.target_amount !== undefined && req.body.target_amount !== ''
+    ? u.parseAmountToCents(req.body.target_amount)
+    : Number(g.target_cents);
+  if (!target) return api.badRequest(res, '请填写目标金额');
+  const status = ['active', 'done', 'achieved', 'archived'].includes(req.body.status) ? req.body.status : g.status;
+  run(
+    `UPDATE goals SET name = ?, icon = ?, target_cents = ?, account_id = ?, target_date = ?, status = ?, note = ?
+     WHERE id = ? AND ledger_id = ?`,
+    String(req.body.name || '').trim().slice(0, 30) || g.name,
+    req.body.icon || g.icon,
+    target,
+    req.body.account_id ? Number(req.body.account_id) : null,
+    req.body.target_date || null,
+    status,
+    String(req.body.note || '').slice(0, 200),
+    id, ledgerId
+  );
+  auth.audit(req, 'goal.update', { entity: 'goal', entityId: id, ledgerId });
+  api.ok(res, { id });
 }));
 
 goals.delete('/:id(\\d+)', auth.requireLogin, auth.requireLedgerWrite, api.asyncHandler((req, res) => {

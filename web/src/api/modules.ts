@@ -120,6 +120,8 @@ export const GoalsApi = {
   list: () => api.get('/goals').then((r) => r.data.data),
   create: (payload: Record<string, unknown>) =>
     api.post('/goals', payload, { headers: { 'Content-Type': 'application/json' } }).then((r) => r.data),
+  update: (id: number, payload: Record<string, unknown>) =>
+    api.put(`/goals/${id}`, payload, { headers: { 'Content-Type': 'application/json' } }).then((r) => r.data),
   deposit: (id: number, payload: Record<string, unknown>) =>
     api.post(`/goals/${id}/deposit`, payload, { headers: { 'Content-Type': 'application/json' } }).then((r) => r.data),
   remove: (id: number) => api.delete(`/goals/${id}`).then((r) => r.data),

@@ -628,7 +628,7 @@ B1 第二轮修复（用户截图反馈后）：
 | D3 | 预算管理 | `budgets.ejs` + `partials/budget-cat-options.ejs` | `BudgetsView.vue` | 已确认 | 见下方修复清单（7 项 + 2 个视觉对齐小修）；**trigger_type（统计对象）后端 DB 字段已存在，之前前端没暴露 → 抽屉已补** |
 | D4 | 周期账单 | `recurring.ejs` | `RecurringView.vue` | 已确认 | 见下方修复清单（10 项）；**卡片标题改回 `b.name`、补已暂停/自动记账/仅提醒 chips、补下次+上次执行、抽屉精简 `day_of_month/weekday/interval_n/to_account_id`、auto_post 默认改 true** |
 | D5 | 订阅扣费 | `subscriptions.ejs` | `SubscriptionsView.vue` | 已确认 | 见下方修复清单（2 个隐性缺陷 + 16 项功能补齐 + 币种符号支持）；**统计卡全为 0 的致命 bug 已修，分组/月均/历史扣费/管理页外链已补齐** |
-| D6 | 借贷台账 | `debts.ejs` | `DebtsView.vue` | 待修 | |
+| D6 | 借贷台账 | `debts.ejs` | `DebtsView.vue` | 已确认 | 口径归一、create_txn、部分核销、PUT 编辑、排序/删除保护已修 |
 | D7 | 储蓄目标 | `goals.ejs` | `GoalsView.vue` | 待修 | |
 
 #### D5 订阅扣费修复（2026-10-27）
@@ -742,6 +742,29 @@ B1 第二轮修复（用户截图反馈后）：
 **遗留**：`AccountDetailView.vue`（D2）的余额调整提示语解包层级错（`r.delta` 应为 `r.data.delta`，后端 `api.created` 的 `delta` 在 `data` 里）→ 显示为「已调整（NaN 元）」，**留待 D2 一并修复**。
 
 **用户验收**：已确认。
+
+#### D6 借贷台账修复（2026-10-29）
+
+以老版 `src/views/debts.ejs`（118 行）+ `src/routes/planning.js`（246-331 行）为行为基准，重写 `src/routes/api.v1.planning.js` 的借贷段并补齐 `web/src/views/DebtsView.vue`。
+
+**6 个缺陷：**
+
+| # | 缺陷 | 现象 | 根因 | 修法 | 文件 |
+|---|---|---|---|---|---|
+| 1 | **direction 口径分裂** | 流水自动汇总出来的台账记录显示成「借入」且结算方向判反 | API 手工台账写 `lend`/`borrow`，而 `lib/txn.js` 的 `syncDebts()` 写 `receivable`/`payable` | `GET /debts` 统一归一化为 `lend`/`borrow`，另返回 `raw_direction` / `is_auto` / `is_settled` | `api.v1.planning.js` |
+| 2 | **不生成账户流水** | 勾选「生成流水」也不影响账户余额 | 新版 `POST /debts` 只插 debts 表，从不调用 `txn.createTransaction` | 补 `create_txn` 分支：为真时校验 `account_id` 后建交易且不插 debts 表（台账由 `syncDebts` 自动汇总）；为假时维持原 INSERT | `api.v1.planning.js` |
+| 3 | **不支持部分还款** | 只能一次性全额核销 | `settle` 固定按 `principal_cents` 全额建交易 | 改为读取 `amount`（上限为剩余余额）递减 `balance_cents`，未清零保持 `open`，清零置 `closed` | `api.v1.planning.js` |
+| 4 | **排序反了** | 已结清的排在最前面 | `ORDER BY d.status ASC` 下 `closed` 字典序小于 `open` | 改 `CASE WHEN status='open' THEN 0 ELSE 1 END ASC` + `due_date` 升序 + `LIMIT 300` | `api.v1.planning.js` |
+| 5 | **引用不存在的列** | 结算建交易时带 `counter_account_id` | `debts` 表无该列（PRAGMA 实测） | 删除该引用 | `api.v1.planning.js` |
+| 6 | **删除无保护** | 自动汇总的台账记录可被删 | `DELETE` 未校验来源 | 先查 `note`，命中「系统自动汇总」返回 `badRequest` | `api.v1.planning.js` |
+
+**用户决策（F4 方案 B）**：保留「编辑」按钮 → 后端新增 `PUT /debts/:id`（自动汇总记录不允许编辑；改本金时重置余额与状态，其余只更对方/账户/到期日/备注）。
+
+**前端补齐（7 项）**：① 4 张统计卡对齐老版（未结借出·应收 / 未结借入·应付 / 净头寸 / 已结清），未结清按**剩余余额**累计、净头寸 = 应收 − 应付且配色随正负；② 卡片头补「应收 / 应付」chip、「自动」chip、已结清 / 已逾期标签；③ 金额区大字改为**剩余余额**，右侧小字补「本金 ¥X」；④ 按钮文案按方向改「收款核销 / 还款核销」，编辑与删除对自动汇总记录隐藏；⑤ 筛选卡右侧补「近 3 天到期的会自动提醒」；⑥ 新建抽屉删除「对方账户（可选）」表单项（列不存在），补「生成账户流水」开关（默认开）与说明文案；⑦ 结算抽屉新增「本次核销金额」输入（默认剩余余额、上限余额）+ 实时「核销后剩余 ¥X」提示，提示语金额随输入变化。
+
+**验证**：`npm run build`（`vue-tsc --noEmit && vite build`）0 错误、exit 0；`node --check src/routes/api.v1.planning.js` 通过。
+
+**注意**：后端 `api.v1.planning.js` 有改动，**需重启 5111 生效**。
 
 ---
 
@@ -863,7 +886,7 @@ B1 第二轮修复（用户截图反馈后）：
 | P3 | G1~G7 | 裸页，改动相对独立 |
 
 > A3（全局 CSRF）已随 C2 一并处理并实测通过 ✅ 已确认。
-> **P0/P1 已全部完成**，D2/D3/D4 已确认。下一项按顺序为 **P2：D6 借贷台账**。
+> **P0/P1 已全部完成**，D2/D3/D4/D6 已确认。下一项按顺序为 **P2：D7 储蓄目标**。
 
 ---
 
@@ -895,3 +918,4 @@ B1 第二轮修复（用户截图反馈后）：
 | 2026-10-28 | C1 | 报表分析按老版 `reports.ejs` + `routes/reports.js` + `lib/charts.js` 重写 `ReportsView.vue`，**后端 `api.v1.reports.js` 与老版行为一致、无需改动**，问题几乎全在前端。**12 个隐性缺陷（字段名错配 → 数据全空/恒 0）**：① `cats[].amount_cents` → 实为 `total`（分类表金额列全空，**饼图同错导致环图整块空白**）；② `cats[].percent` 后端无此字段 → 占比显示 `NaN%`；③ `cats[].count` → 实为 `cnt`；④ `members[].display_name` → 实为 `name`；⑤ `overview.netWorth` → 实为 `net`（净资产卡恒 ¥0.00）；⑥ `overview.totalAssets` → 实为 `assets`；⑦ `overview.totalLiabilities` → 实为 `liabilities`；⑧ `accounts[].current_cents` → 实为 `balance_cents`；⑨ `accounts[].init_cents` → 实为 `initial_cents`；⑩ `netWorth[].date`/`.netWorth` → 实为 `.month`/`.value`（净资产折线图 X 轴全 undefined）；⑪ `expenseCount.avg` 是「分」却按「元」用 → 笔均支出放大 100 倍；⑫ 图表数据未做「分→元」换算 → 所有图表 Y 轴放大 100 倍。**13 项老版功能补齐**：分类下钻（复用后端已有 `?top=`，chips 传一级分类名 + 「返回一级」）、**分类排行榜横向条形图**（新增 `RankBars.vue`，TOP 30）、环图中心金额、**环图图例列表**（新增 `DonutLegend.vue`）、同期对比改老版表格结构并补**环比百分比**、结余卡补储蓄率、笔均支出卡补「N 笔 · 记账 M 天」、每日走势标注「支出最高的一天」、成员对比补头像+进度条+首字母、账户表补「占净资产 %」列、净资产走势补摘要行、X 轴短标签（新增 `utils/format.ts` 的 `monthShort`）、**区间筛选改为 URL 驱动**（刷新/分享可还原）。**体验细节**：区间预设由 `NSelect` 改老版 chip 按钮组、「本季」→「本季度」、账户类型列改用 `ACCOUNT_TYPE_MAP` 中文 label、`DonutChart` 统一单位契约（入参「分」内部换算「元」，**顺带修正 `DashboardView` 环图 tooltip 放大 100 倍**）、新增 `money.ts` 的 `fmtCompact` 与 `format.ts` 的 `initials`。**结构决策（用户确认）**：保留新版 6 tab 布局，老版关键信息补进各 tab。`npm run build` 0 错误；浏览器实测 6 tab + 5 种区间预设 + 双视角 + 下钻/返回全部通过。**已确认** |
 | 2026-10-28 | C2 | 搜索筛选按老版 `search.ejs` 重写 `SearchView.vue`，并修后端 `api.v1.dashboard.js` 的老版遗留 bug。**1 个致命缺陷（整页白屏）**：`NDatePicker` 的 `v-model:value` 直接绑 `f.from`/`f.to`（初值 `''` 字符串），naive 只收毫秒时间戳 → `RangeError: Invalid time value` → setup 中断、组件不渲染（dev 下 body 长度 0，生产构建渲染成空壳 `<div class="undefined-date-picker">`）→ 改用项目已有的 `DatePickerWrap.vue`。**11 项行为缺陷**：① **按成员筛选永远返回 0 条** —— 后端 `hasQuery` 用 `Object.values(f).some(v => v !== 1 && v !== 30 ...)` 判断，把 **`memberId === 1`（第一个成员）误判成「没有条件」**（老版遗留 bug），改为显式列举业务筛选项数组判断；② 前端取 `m.id`（成员关系行 ID）而老版用 `m.user_id`（用户 ID），后端 `t.user_id = ?` 匹配的是用户 ID → 改为 `m.user_id`；③ 后端把按日分组放在响应**顶层** `data.groups`，前端读的是 `data.result.groups` → 结果列表恒显示「还没有记录」，改为读 `d.groups`；④ 结果列表改用 `TxnList.vue` 组件（用户确认方案，与明细页同风格，符号/时刻/来源/附件徽标自动对齐）；⑤ 分类下拉补**二级分类层级路径**（`支 · 餐饮/早餐`，一级分类不作选项）；⑥ 补「来源」筛选（全部/手动记账/AI 截图/AI 文字/账单导入/周期账单）；⑦ 排序文案回老版（最新在前/最早在前/金额从大到小/金额从小到大）；⑧ 关键词提示语回老版「关键字：备注 / 商家 / 分类 / 金额」，金额输入框加 `¥` 前缀；⑨ 全部筛选条件**同步到 `route.query`**（刷新/分享可还原）。**A3 全局 CSRF 一并收尾**：新增 `web/src/api/csrfFetch.ts`（自动注入 `X-CSRF-Token`、`credentials: 'include'`、401 自动跳登录、`skipCsrf` 开关），把 `stores/session.ts`（switchLedger/logout）、`views/SettingsView.vue`（createToken/revokeToken）、`views/LoginView.vue` 共 5 处裸 `fetch` 收敛。**第二轮修复（用户反馈补充）**：① `App.vue` 的 `NConfigProvider` 全局注入 `zhCN` + `dateZhCN`（全站 Select/DatePicker/Popconfirm 中文，解决无效 `:locale` prop 导致的英文 "Select Date"）；② 排序 `NSelect` 从筛选下拉行末尾挪到**日期行最后**（加 `.sort-select { margin-left: auto }` 推到行尾）；③ 结束日期 `disabledDate` 禁选早于起始、起始越界自动顺延结束日期到 23:59:59；④ 日期改 `type="datetime"` + 后端 SQL 从 `txn_date >= ?` 改为**拼接 `txn_date \|\| ' ' \|\| COALESCE(txn_time, '00:00:00')` 比较**（SQL 级别 bug：短日期字典序小会把起始日全排除）；⑤ 默认区间 `from=当月1号 00:00:00` / `to=今天 23:59:59`、`onMounted` 每次都搜、`reset()` 也恢复默认并重搜；⑥ 其他页面时间统一到秒（`AiView` 的 `NTimePicker format="HH:mm:ss"`）。**验证**：`npm run build` 0 错误；浏览器实测（临时 5112 实例 + 5111 用户实例）白屏修复、成员筛选 0 → 1369 条、分类+日期 15 笔、来源+金额 16 笔、分类名下钻 97 笔、翻页 2/20、`TxnList` 项含时刻/来源 chip/📎 徽标/正确收支符号、令牌创建→吊销全链路通过、全局 zhCN 生效、默认当月区间自动出结果。**测试数据已清理**（令牌记录已删、临时日志已删）。**注意**：后端 `api.v1.dashboard.js`（hasQuery）+ `src/lib/txn.js`（日期拼接）均有改动，**需重启 5111 生效**。**已确认** |
 | 2026-10-29 | D4 | 周期账单按老版 `recurring.ejs` 对齐 `RecurringView.vue`（后端 `api.v1.planning.js` 的 API 层刻意简化成单 item，不改后端）。**10 项修复**：① 顶部补 `NAlert` 说明卡（周期账单是什么、自动记账 vs 仅提醒）；② 卡片标题由 `b.note \|\| TXN_TYPE_MAP.label` 改回 **`b.name`**（后端早已返回）；③ 标题旁 chips 由 footer 移到 header，补**已暂停 / 自动记账 / 仅提醒**三态；④ 次信息行补 `freqLabel + （每 N 期）` + **下次执行（加粗醒目）** + **上次执行日期**（新版原有但未显示）；⑤ 右侧金额下补「1 项」（老版多 item 聚合口径，本版 API 单 item 恒为 1）；⑥ 操作按钮顺序回老版：**立即记一笔（主按钮）/ 暂停·启用 / 编辑 / 删除**，文案「补登」→「立即记一笔」；⑦ 抽屉类型去掉 **transfer**，只留支出/收入，分类下拉按 type kind 过滤；⑧ 抽屉**精简 4 个底层字段**（`day_of_month`/`weekday`/`interval_n`/`to_account_id`），频率改为按月/周/年/日换算，对齐老版表单；⑨ `auto_post` 默认值 `false` → **`true`**（对齐老版默认勾选）；⑩ 保留新版有理增强（商户/备注）。**架构决策**：老版多 item 明细列表（`recurring_items` 子表）因 API 层只暴露 1 项，本轮不做，如需扩展需改后端 `parseRecurringRule` 返回数组。`npm run build` 0 错误。**已确认** |
+| 2026-10-29 | D6 | 借贷台账按老版 `debts.ejs` + `routes/planning.js` 重写 `api.v1.planning.js` 借贷段并补齐 `DebtsView.vue`。**6 个缺陷**：① **direction 口径分裂** —— `syncDebts()` 写 `receivable`/`payable` 而 API 写 `lend`/`borrow` → 自动汇总记录被误显示成「借入」且结算方向判反（GET 时统一归一化并返回 `raw_direction`/`is_auto`/`is_settled`）；② **不生成账户流水** —— 老版勾选 `create_txn` 时只建交易（台账由 `syncDebts` 汇总），新版从不建（已补该分支，为真时不插 debts 表）；③ **不支持部分还款** —— 固定全额核销（改为按 `amount` 递减 `balance_cents`，未清零保持 `open`）；④ **排序反了** —— `ORDER BY status ASC` 让已结清排最前（改 `CASE WHEN open` 优先 + 到期日升序 + `LIMIT 300`）；⑤ **引用不存在的 `counter_account_id` 列**（已删）；⑥ **删除无保护** —— 自动汇总记录可被删（已按 `note` 拦截）。**用户决策（方案 B）保留编辑按钮** → 后端新增 `PUT /debts/:id`（自动汇总不允许编辑；改本金时重置余额与状态）。**前端补齐 7 项**：统计卡对齐老版 4 张（未结借出/未结借入/净头寸/已结清，净头寸=应收−应付且配色随正负）、卡片头 chip（应收/应付/自动/已结清/已逾期）、金额区大字改剩余余额+小字本金、按钮文案按方向（收款核销/还款核销）且编辑删除对自动汇总隐藏、筛选卡右侧补「近 3 天到期的会自动提醒」、新建抽屉删「对方账户（可选）」并补「生成账户流水」开关（默认开）、结算抽屉补「本次核销金额」+ 实时剩余提示。`npm run build` 0 错误、`node --check` 通过。**注意**：后端 `api.v1.planning.js` 有改动，**需重启 5111 生效**。**已确认** |

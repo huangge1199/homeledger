@@ -39,6 +39,7 @@ function emptyForm() {
     name: '',
     icon: '🐷',
     target_amount: '',
+    saved_amount: '',
     target_date: null as number | null,
     account_id: 0,
     status: 'active',
@@ -92,9 +93,11 @@ function openEdit(g: any) {
     name: g.name,
     icon: g.icon || '🐷',
     target_amount: (Number(g.target_cents) / 100).toFixed(2),
+    saved_amount: '',
     target_date: g.target_date ? dayjs(g.target_date).valueOf() : null,
     account_id: g.account_id || 0,
-    status: g.status || 'active',
+    // 历史数据可能是 achieved，统一成 done
+    status: g.status === 'achieved' || g.status === 'done' ? 'done' : (g.status || 'active'),
     note: g.note || '',
   }
   drawerOpen.value = true
@@ -116,22 +119,13 @@ async function onSubmit() {
       note: form.value.note,
     }
     if (editing.value) {
-    // 后端 v1 没有 update goal（直接走 v1 限制）。这里采用：保存新目标 + 把旧目标的已存金额作为一次 deposit 转入
-    const newR = await GoalsApi.create({ ...payload, saved_cents: 0 })
-    if (Number(editing.value.saved_cents) > 0 && newR?.id) {
-      // 通过 deposit 把旧 saved 转到新目标（扣减原账户），同步新增一笔交易
-      await GoalsApi.deposit(Number(newR.id), {
-        amount: String(Number(editing.value.saved_cents) / 100),
-        account_id: payload.account_id || editing.value.account_id,
-        note: '从旧目标迁移',
-      }).catch(() => null)
+      await GoalsApi.update(Number(editing.value.id), payload)
+      success('已更新')
+    } else {
+      payload.saved_amount = form.value.saved_amount
+      await GoalsApi.create(payload)
+      success('已创建')
     }
-    await GoalsApi.remove(Number(editing.value.id))
-    success('已更新')
-  } else {
-    await GoalsApi.create(payload)
-    success('已创建')
-  }
     drawerOpen.value = false
     load()
   } catch (e: any) {
@@ -184,15 +178,24 @@ async function onDelete(g: any) {
 const goalProgress = (g: any) => {
   const target = Number(g.target_cents) || 0
   const saved = Number(g.saved_cents) || 0
+  const remain = Math.max(0, target - saved)
+  // 允许负数：负数表示已逾期多少天
+  const days = g.target_date ? dayjs(g.target_date).diff(dayjs().startOf('day'), 'day') : null
   return {
     ratio: target > 0 ? Math.min(100, (saved / target) * 100) : 0,
     saved,
     target,
-    remain: Math.max(0, target - saved),
+    remain,
     reached: saved >= target,
-    days: g.target_date ? Math.max(0, dayjs(g.target_date).diff(dayjs(), 'day')) : null,
+    days,
+    daysLabel: days === null ? null : (days >= 0 ? `还有 ${days} 天` : `已逾期 ${-days} 天`),
+    // 每月需存：剩余金额 / 剩余月数（按 30 天/月），四舍五入到分
+    needPerMonth: days !== null && days > 0 && remain > 0
+      ? Math.ceil(remain / Math.max(1, days / 30))
+      : null,
   }
 }
+const isDone = (g: any) => g.status === 'done' || g.status === 'achieved'
 </script>
 
 <template>
@@ -225,13 +228,17 @@ const goalProgress = (g: any) => {
             <div class="head">
               <span class="ico">{{ g.icon || '🐷' }}</span>
               <div class="meta">
-                <div class="title">{{ g.name }}</div>
+                <div class="title">
+                  {{ g.name }}
+                  <NTag v-if="isDone(g)" size="tiny" type="success" :bordered="false">已达成</NTag>
+                </div>
                 <div class="sub">
                   <NText depth="3">
                     目标
                     <AmountDisplay :cents="g.target_cents" :small="true" />
-                    <span v-if="g.target_date"> · 截止 {{ g.target_date }}</span>
-                    <span v-if="g.account_name"> · {{ g.account_name }}</span>
+                    <span v-if="g.target_date"> · 目标日 {{ g.target_date }}</span>
+                    <span v-if="g.account_name"> · 存入账户 {{ g.account_name }}</span>
+                    <span v-if="g.note"> · {{ g.note }}</span>
                   </NText>
                 </div>
               </div>
@@ -277,7 +284,10 @@ const goalProgress = (g: any) => {
 
           <div class="footer">
             <span>📊 完成 {{ goalProgress(g).ratio.toFixed(1) }}%</span>
-            <span v-if="goalProgress(g).days !== null">📅 还有 {{ goalProgress(g).days }} 天</span>
+            <span v-if="!goalProgress(g).reached && goalProgress(g).daysLabel">📅 {{ goalProgress(g).daysLabel }}</span>
+            <span v-if="!goalProgress(g).reached && goalProgress(g).needPerMonth">
+              💰 每月需存 <AmountDisplay :cents="goalProgress(g).needPerMonth" />
+            </span>
             <NSpace size="small" @click.stop>
               <NButton type="primary" size="small" @click="openDeposit(g)">+ 存入</NButton>
             </NSpace>
@@ -299,6 +309,9 @@ const goalProgress = (g: any) => {
           <NFormItem label="目标金额" required>
             <NInput v-model:value="form.target_amount" placeholder="0.00" />
           </NFormItem>
+          <NFormItem v-if="!editing" label="已存金额">
+            <NInput v-model:value="form.saved_amount" placeholder="0.00（可选，不生成流水）" />
+          </NFormItem>
           <NFormItem label="截止日期">
             <NDatePicker
               v-model:value="form.target_date"
@@ -315,7 +328,7 @@ const goalProgress = (g: any) => {
               v-model:value="form.status"
               :options="[
                 { label: '进行中', value: 'active' },
-                { label: '已达成', value: 'achieved' },
+                { label: '已达成', value: 'done' },
                 { label: '已归档', value: 'archived' },
               ]"
             />
