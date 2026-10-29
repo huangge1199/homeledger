@@ -2,8 +2,9 @@
 import { computed, h, onMounted, ref, watch } from 'vue'
 import {
   NCard, NButton, NSpace, NText, NTag, NInput, NForm, NFormItem, NPopconfirm,
-  NDrawer, NDrawerContent, NSelect, NSpin, NGrid, NGridItem, useMessage,
+  NDrawer, NDrawerContent, NSelect, NSpin, NGrid, NGridItem, NAlert, useMessage,
 } from 'naive-ui'
+import { RouterLink } from 'vue-router'
 import AppShell from '@/layouts/AppShell.vue'
 import PageHead from '@/components/PageHead.vue'
 import Empty from '@/components/Empty.vue'
@@ -44,6 +45,7 @@ watch(() => session.currentLedger?.id, load)
 const sorted = computed(() => [...tags.value].sort((a, b) => b.cnt - a.cnt))
 const totalCount = computed(() => tags.value.reduce((s, t) => s + (t.cnt || 0), 0))
 
+const CUSTOM_COLOR = '__custom'
 const colorOptions = [
   { label: '🔵 蓝', value: '#4f7cff' },
   { label: '🟠 橙', value: '#fa8c16' },
@@ -53,7 +55,17 @@ const colorOptions = [
   { label: '🟡 黄', value: '#faad14' },
   { label: '🔴 红', value: '#f5222d' },
   { label: '⚪ 灰', value: '#8c8c8c' },
+  { label: '🎨 自定义', value: CUSTOM_COLOR },
 ]
+
+// 预设色下拉 + 自定义输入兜底：选中「自定义」时展示 hex 输入框
+const isPresetColor = computed(() => colorOptions.some((o) => o.value === form.value.color))
+const colorValue = computed({
+  get: () => (isPresetColor.value ? form.value.color : CUSTOM_COLOR),
+  set: (v: string) => {
+    if (v !== CUSTOM_COLOR) form.value.color = v
+  },
+})
 
 function openCreate() {
   editing.value = null
@@ -73,12 +85,17 @@ async function onSubmit() {
     return
   }
   submitting.value = true
+  // 兜底：自定义颜色不是合法 hex 时回落默认蓝
+  const payload = {
+    name: form.value.name.trim(),
+    color: /^#[0-9a-fA-F]{6}$/.test(form.value.color) ? form.value.color : '#4f7cff',
+  }
   try {
     if (editing.value) {
-      await TagsApi.update(Number(editing.value.id), form.value)
+      await TagsApi.update(Number(editing.value.id), payload)
       success('已更新')
     } else {
-      await TagsApi.create(form.value)
+      await TagsApi.create(payload)
       success('已创建')
     }
     drawerOpen.value = false
@@ -110,6 +127,10 @@ async function onDelete(t: any) {
       </template>
     </PageHead>
 
+    <NAlert type="info" :bordered="false" class="notice">
+      标签是跨分类的横向维度，比如「出差」「装修」「2026海南行」，可以在记账时直接填，用来观察某类专项开销。
+    </NAlert>
+
     <NCard :bordered="true" size="small" class="summary-card">
       <NGrid :cols="3" :x-gap="12">
         <NGridItem>
@@ -136,14 +157,20 @@ async function onDelete(t: any) {
     <NSpin :show="loading">
       <Empty
         v-if="!loading && !tags.length"
-        icon="🏷️"
+        icon="🔖"
         title="还没有标签"
-        description="在记一笔时为交易打标签，方便后续按标签筛选"
+        description="在记账时直接填写标签名即可创建，也可以点右上角「＋ 新建标签」"
       >
         <NButton type="primary" @click="openCreate">＋ 新建标签</NButton>
       </Empty>
 
       <NCard v-else :bordered="true" class="tags-card">
+        <template #header>
+          <div class="card-head">
+            <span>全部标签</span>
+            <NText depth="3" class="cnt">{{ tags.length }} 个</NText>
+          </div>
+        </template>
         <div class="tag-grid">
           <div
             v-for="t in sorted"
@@ -153,7 +180,9 @@ async function onDelete(t: any) {
           >
             <div class="tag-ico" :style="{ background: t.color }">#</div>
             <div class="tag-info">
-              <div class="name">{{ t.name }}</div>
+              <div class="name">
+                <RouterLink class="tag-link" :to="{ path: '/search', query: { tag_id: t.id } }">{{ t.name }}</RouterLink>
+              </div>
               <div class="meta">
                 <span class="cnt">{{ t.cnt }} 笔</span>
                 <span class="dot">·</span>
@@ -185,8 +214,17 @@ async function onDelete(t: any) {
             <NInput v-model:value="form.name" maxlength="20" show-count placeholder="如：工作日、报销" />
           </NFormItem>
           <NFormItem label="颜色">
-            <NSelect v-model:value="form.color" :options="colorOptions" />
-            <span class="color-preview" :style="{ background: form.color }"></span>
+            <div class="color-field">
+              <NSelect v-model:value="colorValue" :options="colorOptions" />
+              <NInput
+                v-if="!isPresetColor"
+                v-model:value="form.color"
+                maxlength="7"
+                placeholder="#4f7cff"
+                class="color-input"
+              />
+              <span class="color-preview" :style="{ background: form.color }"></span>
+            </div>
           </NFormItem>
         </NForm>
         <template #footer>
@@ -234,8 +272,16 @@ async function onDelete(t: any) {
 .tag-info .name { font-size: 14px; font-weight: 500; }
 .tag-info .meta { display: flex; gap: 4px; font-size: 11px; color: var(--hl-muted); margin-top: 2px; }
 .tag-info .meta .dot { opacity: .5; }
-.tag-item .actions { opacity: 0; transition: opacity .15s; }
-.tag-item:hover .actions { opacity: 1; }
+.tag-item .actions { flex-shrink: 0; }
+
+.notice { margin-bottom: 12px; }
+.card-head { display: flex; align-items: baseline; gap: 8px; }
+.card-head .cnt { font-size: 12px; }
+.tag-link { color: inherit; text-decoration: none; }
+.tag-link:hover { color: var(--hl-primary, #3d6df5); text-decoration: underline; }
+.color-field { display: flex; align-items: center; gap: 8px; width: 100%; }
+.color-field .n-select { flex: 1; }
+.color-input { width: 120px; }
 
 .color-preview { display: inline-block; width: 20px; height: 20px; border-radius: 4px; margin-left: 8px; vertical-align: middle; border: 1px solid var(--hl-border); }
 </style>

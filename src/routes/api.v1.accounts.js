@@ -222,7 +222,8 @@ categories.delete('/:id(\\d+)', auth.requireLogin, auth.requireLedgerWrite, api.
 tags.get('/', auth.requireLogin, api.asyncHandler((req, res) => {
   const ledgerId = Number(res.locals.ledger.id);
   const list = all(
-    `SELECT t.*, (SELECT COUNT(*) FROM transaction_tags tt WHERE tt.tag_id = t.id) AS cnt,
+    `SELECT t.*, (SELECT COUNT(*) FROM transaction_tags tt JOIN transactions x ON x.id = tt.transaction_id
+       WHERE tt.tag_id = t.id AND x.deleted_at IS NULL) AS cnt,
        (SELECT COALESCE(SUM(x.amount_base_cents),0) FROM transaction_tags tt JOIN transactions x ON x.id = tt.transaction_id
          WHERE tt.tag_id = t.id AND x.deleted_at IS NULL) AS total
      FROM tags t WHERE t.ledger_id = ? ORDER BY cnt DESC, t.id`, ledgerId);
