@@ -108,6 +108,8 @@ export const DebtsApi = {
   list: () => api.get('/debts').then((r) => r.data.data),
   create: (payload: Record<string, unknown>) =>
     api.post('/debts', payload, { headers: { 'Content-Type': 'application/json' } }).then((r) => r.data),
+  update: (id: number, payload: Record<string, unknown>) =>
+    api.put(`/debts/${id}`, payload, { headers: { 'Content-Type': 'application/json' } }).then((r) => r.data),
   settle: (id: number, payload: Record<string, unknown> = {}) =>
     api.post(`/debts/${id}/settle`, payload, { headers: { 'Content-Type': 'application/json' } }).then((r) => r.data),
   remove: (id: number) => api.delete(`/debts/${id}`).then((r) => r.data),

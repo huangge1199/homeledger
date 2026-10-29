@@ -312,30 +312,74 @@ recurring.delete('/:id(\\d+)', auth.requireLogin, auth.requireLedgerWrite, api.a
 /* ===================================================== 借贷台账 ===================================================== */
 /** debts 实际 schema: id, ledger_id, direction, counterparty, principal_cents, balance_cents,
  *  currency, account_id, due_date, status (open/closed), note, created_at
- *  不存在: interest_rate, start_date, is_settled
+ *  不存在: interest_rate, start_date, is_settled, counter_account_id
  *  status 替代 is_settled (open=未结, closed=已结)
+ *
+ *  direction 口径统一：手工台账写 lend/borrow，而 lib/txn.js 的 syncDebts 自动汇总写
+ *  receivable/payable。两套并存会导致前端把自动汇总记录误判成反方向，这里统一归一化成
+ *  lend/borrow 再对外返回。
  */
+const DEBT_DIR_ALIAS = { receivable: 'lend', payable: 'borrow', lend: 'lend', borrow: 'borrow' };
+function normDebtDir(v) { return DEBT_DIR_ALIAS[v] || 'lend'; }
+const AUTO_DEBT_NOTE = '系统自动汇总';
+
 debts.get('/', auth.requireLogin, api.asyncHandler((req, res) => {
   const ledger = res.locals.ledger;
   if (!ledger) return api.ok(res, { items: [] });
   const ledgerId = Number(ledger.id);
+  // 未结清的排在前面，其余按到期日升序（无到期日排最后），对齐老版 COALESCE(due_date,'9999')
   const items = all(
     `SELECT d.*, a.name AS account_name, a.icon AS account_icon
      FROM debts d LEFT JOIN accounts a ON a.id = d.account_id
-     WHERE d.ledger_id = ? ORDER BY d.status ASC, d.due_date ASC, d.id DESC`, ledgerId)
-    .map((d) => ({ ...d, is_settled: d.status === 'closed' }));
+     WHERE d.ledger_id = ?
+     ORDER BY CASE WHEN d.status = 'open' THEN 0 ELSE 1 END ASC,
+              COALESCE(d.due_date, '9999-12-31') ASC, d.id DESC
+     LIMIT 300`, ledgerId)
+    .map((d) => ({
+      ...d,
+      direction: normDebtDir(d.direction),
+      raw_direction: d.direction,
+      is_settled: d.status === 'closed',
+      is_auto: d.note === AUTO_DEBT_NOTE,
+    }));
   api.ok(res, { items });
 }));
 
 debts.post('/', auth.requireLogin, auth.requireLedgerWrite, api.asyncHandler((req, res) => {
   const ledgerId = Number(res.locals.ledger.id);
-  const direction = ['lend', 'borrow'].includes(req.body.direction) ? req.body.direction : 'lend';
+  const direction = normDebtDir(req.body.direction);
   const principal = u.parseAmountToCents(req.body.principal);
+  const counterparty = String(req.body.counterparty || '').trim().slice(0, 40);
+  if (!counterparty) return api.badRequest(res, '请填写对方');
   if (!principal) return api.badRequest(res, '请填写本金');
+
+  // 对齐老版：勾选「同时生成账户流水」时只建交易，台账由 syncDebts 自动汇总
+  // （若同时插 debts 表，会与自动汇总重复出一条同对手方记录）
+  if (req.body.create_txn) {
+    const accountId = req.body.account_id ? Number(req.body.account_id) : null;
+    if (!accountId) return api.badRequest(res, '生成账户流水需要指定资金账户');
+    let tId;
+    try {
+      tId = txn.createTransaction(ledgerId, req.session.userId, {
+        type: direction === 'lend' ? 'lend' : 'borrow',
+        amount_cents: principal,
+        account_id: accountId,
+        txn_date: req.body.date || todayStr(),
+        merchant: counterparty,
+        note: req.body.note || (direction === 'lend' ? '借出' : '借入'),
+        source: 'manual',
+      });
+    } catch (e) {
+      return api.badRequest(res, e.message || '生成流水失败');
+    }
+    auth.audit(req, 'debt.create', { entity: 'debt', entityId: tId, ledgerId, detail: counterparty });
+    return api.created(res, { txn_id: tId, synced_to_debts: true });
+  }
+
   const info = run(
     `INSERT INTO debts (ledger_id, direction, counterparty, principal_cents, balance_cents, currency, account_id, due_date, status, note, created_at)
      VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
-    ledgerId, direction, String(req.body.counterparty || '').slice(0, 30) || '匿名',
+    ledgerId, direction, counterparty,
     principal, principal, req.body.currency || 'CNY',
     req.body.account_id ? Number(req.body.account_id) : null,
     req.body.due_date || null,
@@ -345,6 +389,33 @@ debts.post('/', auth.requireLogin, auth.requireLedgerWrite, api.asyncHandler((re
   api.created(res, { id: info.lastInsertRowid });
 }));
 
+/** 编辑手工台账：只允许改对方/本金/账户/到期日/备注，不允许改方向。
+ *  改本金时余额同步重置为本金（已还部分无法保留，需重新结算）。
+ *  自动汇总的台账（note = 系统自动汇总）由 syncDebts 托管，不允许编辑。 */
+debts.put('/:id(\\d+)', auth.requireLogin, auth.requireLedgerWrite, api.asyncHandler((req, res) => {
+  const ledgerId = Number(res.locals.ledger.id);
+  const id = Number(req.params.id);
+  const d = get('SELECT * FROM debts WHERE id = ? AND ledger_id = ?', id, ledgerId);
+  if (!d) return api.notFound(res, '台账不存在');
+  if (d.note === AUTO_DEBT_NOTE) return api.badRequest(res, '自动汇总的台账不支持编辑');
+  const counterparty = String(req.body.counterparty || '').trim().slice(0, 40);
+  if (!counterparty) return api.badRequest(res, '请填写对方');
+  const accountId = req.body.account_id ? Number(req.body.account_id) : null;
+  const dueDate = req.body.due_date || null;
+  const note = String(req.body.note || '').slice(0, 200) || null;
+  const principal = u.parseAmountToCents(req.body.principal);
+  if (principal && principal !== Number(d.principal_cents)) {
+    run(`UPDATE debts SET counterparty = ?, principal_cents = ?, balance_cents = ?, account_id = ?, due_date = ?, note = ?, status = ? WHERE id = ?`,
+      counterparty, principal, principal, accountId, dueDate, note, 'open', id);
+  } else {
+    run(`UPDATE debts SET counterparty = ?, account_id = ?, due_date = ?, note = ? WHERE id = ?`,
+      counterparty, accountId, dueDate, note, id);
+  }
+  auth.audit(req, 'debt.update', { entity: 'debt', entityId: id, ledgerId });
+  api.ok(res, { id });
+}));
+
+/** 收/还款核销：支持部分核销（对齐老版 amount 可编辑、余额递减、未还完保持 open） */
 debts.post('/:id(\\d+)/settle', auth.requireLogin, auth.requireLedgerWrite, api.asyncHandler((req, res) => {
   const ledgerId = Number(res.locals.ledger.id);
   const id = Number(req.params.id);
@@ -353,25 +424,35 @@ debts.post('/:id(\\d+)/settle', auth.requireLogin, auth.requireLedgerWrite, api.
   if (d.status === 'closed') return api.badRequest(res, '已结算');
   const settleAccount = req.body.account_id ? Number(req.body.account_id) : Number(d.account_id);
   if (!settleAccount) return api.badRequest(res, '请指定结算账户');
+  const balance = Number(d.balance_cents) || Number(d.principal_cents) || 0;
+  const amount = Math.min(u.parseAmountToCents(req.body.amount) || balance, balance);
+  if (!amount || amount <= 0) return api.badRequest(res, '金额无效');
   // 借出 → 收回借款（repay_receive 收入）；借入 → 偿还借款（repay_pay 支出）
-  const type = d.direction === 'lend' ? 'repay_receive' : 'repay_pay';
+  const direction = normDebtDir(d.direction);
+  const type = direction === 'lend' ? 'repay_receive' : 'repay_pay';
   const tId = txn.createTransaction(ledgerId, req.session.userId, {
     type,
-    amount_cents: d.principal_cents,
+    amount_cents: amount,
     account_id: settleAccount,
-    to_account_id: type === 'repay_pay' ? d.counter_account_id : null,
     txn_date: req.body.settle_date || todayStr(),
+    merchant: d.counterparty,
     note: `结算：${d.counterparty}${req.body.note ? ' · ' + req.body.note : ''}`,
     source: 'manual',
   });
-  run('UPDATE debts SET status = ?, balance_cents = 0 WHERE id = ?', 'closed', id);
-  auth.audit(req, 'debt.settle', { entity: 'debt', entityId: id, ledgerId });
-  api.ok(res, { txn_id: tId });
+  const newBalance = Math.max(0, balance - amount);
+  run('UPDATE debts SET balance_cents = ?, status = ? WHERE id = ?',
+    newBalance, newBalance <= 0 ? 'closed' : 'open', id);
+  auth.audit(req, 'debt.settle', { entity: 'debt', entityId: id, ledgerId, detail: String(amount) });
+  api.ok(res, { txn_id: tId, amount, balance: newBalance });
 }));
 
 debts.delete('/:id(\\d+)', auth.requireLogin, auth.requireLedgerWrite, api.asyncHandler((req, res) => {
   const ledgerId = Number(res.locals.ledger.id);
   const id = Number(req.params.id);
+  const d = get('SELECT * FROM debts WHERE id = ? AND ledger_id = ?', id, ledgerId);
+  if (!d) return api.notFound(res, '台账不存在');
+  // 自动汇总的台账由 syncDebts 每笔交易后重建，手删会被立刻重建，直接拒绝
+  if (d.note === AUTO_DEBT_NOTE) return api.badRequest(res, '自动汇总的台账不支持删除');
   run('DELETE FROM debts WHERE id = ? AND ledger_id = ?', id, ledgerId);
   api.deleted(res, '已删除');
 }));
