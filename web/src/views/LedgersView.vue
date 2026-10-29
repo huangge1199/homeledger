@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { computed, h, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import {
-  NCard, NButton, NSpace, NText, NTag, NInput, NForm, NFormItem, NSelect, NInputNumber,
-  NPopconfirm, NDrawer, NDrawerContent, NDivider, NAlert, NSpin, NGrid, NGridItem,
+  NCard, NButton, NSpace, NText, NTag, NInput, NForm, NFormItem, NSelect,
+  NDrawer, NDrawerContent, NAlert, NSpin, NGrid, NGridItem,
   NColorPicker, useMessage, NSwitch, NRadioGroup, NRadio,
 } from 'naive-ui'
 import AppShell from '@/layouts/AppShell.vue'
@@ -12,6 +12,7 @@ import { AdminApi } from '@/api/modules'
 import { errorMessage } from '@/api/client'
 import { useFlash } from '@/composables/useFlash'
 import { useSessionStore } from '@/stores/session'
+import { colorFor } from '@/utils/format'
 
 const session = useSessionStore()
 const { success, error: toastError } = useFlash()
@@ -24,6 +25,8 @@ const drawerOpen = ref(false)
 const editing = ref<any>(null)
 const submitting = ref(false)
 const form = ref(emptyForm())
+// 用户是否手动改过颜色（未改则跟随账本名自动配色）
+const colorTouched = ref(false)
 
 const deleteOpen = ref(false)
 const deleteTarget = ref<any>(null)
@@ -34,7 +37,8 @@ function emptyForm() {
     name: '',
     kind: 'personal',
     icon: '📒',
-    color: '#3d6df5',
+    // 默认按账本名自动配色（老版新建表单没有颜色项，由后端 colorFor(name) 生成）
+    color: colorFor(''),
     currency: 'CNY',
     with_default_accounts: true,
     note: '',
@@ -55,12 +59,27 @@ async function load() {
 
 onMounted(load)
 
-const kindOptions = [
+/**
+ * 用途选项（文案对齐老版 ledgers.ejs）
+ * 老版新建表单：个人 / 家庭（多人共享）/ 经营 / 旅行 / 项目
+ * 老版编辑表单：个人 / 家庭 / 经营 / 旅行 / 项目
+ */
+const kindOptions = computed(() => [
   { label: '🏠 个人', value: 'personal' },
-  { label: '👨‍👩‍👧 家庭', value: 'family' },
-  { label: '💼 生意/团队', value: 'business' },
+  { label: editing.value ? '👨‍👩‍👧 家庭' : '👨‍👩‍👧 家庭（多人共享）', value: 'family' },
+  { label: '💼 经营', value: 'business' },
   { label: '✈️ 旅行', value: 'travel' },
   { label: '🚀 项目', value: 'project' },
+])
+
+/** 币种（对齐老版编辑表单：CNY/USD/EUR/HKD/JPY/SGD） */
+const currencyOptions = [
+  { label: '人民币 CNY', value: 'CNY' },
+  { label: '美元 USD', value: 'USD' },
+  { label: '欧元 EUR', value: 'EUR' },
+  { label: '港币 HKD', value: 'HKD' },
+  { label: '日元 JPY', value: 'JPY' },
+  { label: '新加坡元 SGD', value: 'SGD' },
 ]
 
 const colorPresets = [
@@ -70,12 +89,14 @@ const colorPresets = [
 
 function openCreate() {
   editing.value = null
+  colorTouched.value = false
   form.value = emptyForm()
   drawerOpen.value = true
 }
 
 function openEdit(l: any) {
   editing.value = l
+  colorTouched.value = true
   form.value = {
     name: l.name,
     kind: l.kind,
@@ -88,8 +109,14 @@ function openEdit(l: any) {
   drawerOpen.value = true
 }
 
+// 老版新建表单没有颜色项，颜色由后端 colorFor(name) 自动生成；
+// 这里在用户未手动指定颜色前，随账本名同步自动配色
+watch(() => form.value.name, (name) => {
+  if (!editing.value && !colorTouched.value) form.value.color = colorFor(name)
+})
+
 async function onSubmit() {
-  if (!form.value.name?.trim()) { message.warning('请填写账本名'); return }
+  if (!form.value.name?.trim()) { message.warning('请填写账本名称'); return }
   submitting.value = true
   try {
     const payload: Record<string, unknown> = {
@@ -102,11 +129,11 @@ async function onSubmit() {
     }
     if (editing.value) {
       await AdminApi.updateLedger(Number(editing.value.id), payload)
-      success('已更新')
+      success('账本信息已更新')
     } else {
       payload.with_default_accounts = form.value.with_default_accounts ? '1' : '0'
       await AdminApi.createLedger(payload)
-      success('已创建')
+      success(`账本「${form.value.name}」已创建`)
       await session.refresh()
     }
     drawerOpen.value = false
@@ -118,10 +145,21 @@ async function onSubmit() {
   }
 }
 
+async function onSwitch(l: any) {
+  try {
+    await session.switchLedger(Number(l.id))
+    success(`已切换到「${l.name}」`)
+  } catch (e: any) {
+    toastError(errorMessage(e, '切换账本失败'))
+  }
+}
+
 async function onArchive(l: any) {
   try {
     await AdminApi.archiveLedger(Number(l.id))
-    success(l.is_archived ? '已恢复' : '已归档')
+    success(l.is_archived ? '账本已恢复' : '账本已归档')
+    // 归档/恢复会改变侧栏账本列表（归档账本不进入当前账本候选），需同步会话
+    await session.refresh()
     load()
   } catch (e: any) {
     toastError(e?.response?.data?.error || e?.message || '操作失败')
@@ -146,11 +184,10 @@ async function onDelete() {
   }
   try {
     await AdminApi.deleteLedger(Number(deleteTarget.value.id), deleteConfirm.value)
-    success(`账本「${deleteTarget.value.name}」已删除`)
+    success(`账本「${deleteTarget.value.name}」及其全部数据已删除`)
     deleteOpen.value = false
-    if (session.currentLedger?.id === Number(deleteTarget.value.id)) {
-      await session.refresh()
-    }
+    // 删除后侧栏账本列表需同步（删掉的可能不是当前账本）
+    await session.refresh()
     load()
   } catch (e: any) {
     toastError(e?.response?.data?.error || e?.message || '删除失败')
@@ -164,13 +201,13 @@ function roleLabel(role: string) {
   return ({ owner: '所有者', admin: '管理员', member: '成员', viewer: '只读' } as Record<string, string>)[role] || role
 }
 function kindLabel(kind: string) {
-  return ({ personal: '个人', family: '家庭', business: '生意/团队', travel: '旅行', project: '项目' } as Record<string, string>)[kind] || kind
+  return ({ personal: '个人', family: '家庭', business: '经营', travel: '旅行', project: '项目' } as Record<string, string>)[kind] || kind
 }
 </script>
 
 <template>
   <AppShell>
-    <PageHead title="账本管理" sub="为不同场景创建独立账本（如家庭/生意/旅行）">
+    <PageHead title="账本管理" sub="账本用于分隔不同用途的账目，例如「家庭」「旅行」「工作室」。每个账本可邀请成员共同记账。">
       <template #actions>
         <NButton type="primary" @click="openCreate">＋ 新建账本</NButton>
       </template>
@@ -218,26 +255,26 @@ function kindLabel(kind: string) {
             </template>
             <template #header-extra>
               <NSpace size="small">
-                <NButton v-if="session.currentLedger?.id !== Number(l.id) && !l.is_archived" size="tiny" type="primary" @click="session.switchLedger(Number(l.id))">
-                  切换
+                <NButton v-if="session.currentLedger?.id !== Number(l.id) && !l.is_archived" size="tiny" type="primary" @click="onSwitch(l)">
+                  切换到该账本
                 </NButton>
-                <NButton v-if="l.role === 'owner' || l.role === 'admin'" size="tiny" quaternary @click="openEdit(l)">编辑</NButton>
-                <NButton v-if="l.role === 'owner' || l.role === 'admin'" size="tiny" quaternary @click="onArchive(l)">归档</NButton>
+                <NButton size="tiny" quaternary @click="openEdit(l)">编辑</NButton>
+                <NButton size="tiny" quaternary @click="onArchive(l)">归档</NButton>
                 <NButton v-if="l.role === 'owner'" size="tiny" quaternary type="error" @click="openDelete(l)">删除</NButton>
               </NSpace>
             </template>
             <div class="stats-row">
               <div class="stat">
                 <div class="num">{{ l.txn_count || 0 }}</div>
-                <div class="lbl">交易</div>
-              </div>
-              <div class="stat">
-                <div class="num">{{ l.account_count || 0 }}</div>
-                <div class="lbl">账户</div>
+                <div class="lbl">笔记录</div>
               </div>
               <div class="stat">
                 <div class="num">{{ l.member_count || 0 }}</div>
-                <div class="lbl">成员</div>
+                <div class="lbl">位成员</div>
+              </div>
+              <div class="stat">
+                <div class="num">{{ l.account_count || 0 }}</div>
+                <div class="lbl">个账户</div>
               </div>
             </div>
             <div v-if="l.note" class="note">{{ l.note }}</div>
@@ -254,6 +291,7 @@ function kindLabel(kind: string) {
               :bordered="true"
               size="small"
               class="ledger archived-item"
+              :style="{ '--ledger-color': l.color } as any"
             >
               <template #header>
                 <div class="head">
@@ -262,17 +300,39 @@ function kindLabel(kind: string) {
                     <div class="title">
                       {{ l.name }}
                       <NTag :bordered="false" size="small" type="warning">已归档</NTag>
+                      <NTag v-if="session.currentLedger?.id === Number(l.id)" type="primary" size="small" :bordered="false">当前</NTag>
+                      <NTag :bordered="false" size="small">{{ roleLabel(l.role) }}</NTag>
                     </div>
-                    <div class="sub">{{ kindLabel(l.kind) }} · {{ l.currency }} · {{ l.txn_count || 0 }} 笔</div>
+                    <div class="sub">
+                      <span>{{ kindLabel(l.kind) }}</span>
+                      <span class="dot">·</span>
+                      <span>{{ l.currency }}</span>
+                    </div>
                   </div>
                 </div>
               </template>
               <template #header-extra>
                 <NSpace size="small">
-                  <NButton v-if="l.role === 'owner' || l.role === 'admin'" size="tiny" type="primary" @click="onArchive(l)">恢复</NButton>
+                  <NButton size="tiny" type="primary" @click="onArchive(l)">取消归档</NButton>
+                  <NButton size="tiny" quaternary @click="openEdit(l)">编辑</NButton>
                   <NButton v-if="l.role === 'owner'" size="tiny" quaternary type="error" @click="openDelete(l)">删除</NButton>
                 </NSpace>
               </template>
+              <div class="stats-row">
+                <div class="stat">
+                  <div class="num">{{ l.txn_count || 0 }}</div>
+                  <div class="lbl">笔记录</div>
+                </div>
+                <div class="stat">
+                  <div class="num">{{ l.member_count || 0 }}</div>
+                  <div class="lbl">位成员</div>
+                </div>
+                <div class="stat">
+                  <div class="num">{{ l.account_count || 0 }}</div>
+                  <div class="lbl">个账户</div>
+                </div>
+              </div>
+              <div v-if="l.note" class="note">{{ l.note }}</div>
             </NCard>
           </div>
         </template>
@@ -283,10 +343,10 @@ function kindLabel(kind: string) {
     <NDrawer v-model:show="drawerOpen" :width="420" placement="right">
       <NDrawerContent :title="editing ? '编辑账本' : '新建账本'" :native-scrollbar="false">
         <NForm label-placement="top" :model="form">
-          <NFormItem label="名称" required>
-            <NInput v-model:value="form.name" maxlength="30" show-count placeholder="如：家庭、旅行-日本" />
+          <NFormItem label="账本名称" required>
+            <NInput v-model:value="form.name" maxlength="30" show-count placeholder="例如：家庭账本 / 2026 装修" />
           </NFormItem>
-          <NFormItem label="类型">
+          <NFormItem label="用途">
             <NRadioGroup v-model:value="form.kind">
               <NSpace size="small" :wrap="true">
                 <NRadio v-for="o in kindOptions" :key="o.value" :value="o.value">{{ o.label }}</NRadio>
@@ -296,21 +356,12 @@ function kindLabel(kind: string) {
           <NGrid :cols="2" :x-gap="12">
             <NGridItem>
               <NFormItem label="图标">
-                <NInput v-model:value="form.icon" maxlength="4" />
+                <NInput v-model:value="form.icon" placeholder="📒" />
               </NFormItem>
             </NGridItem>
             <NGridItem>
               <NFormItem label="币种">
-                <NSelect
-                  v-model:value="form.currency"
-                  :options="[
-                    { label: '人民币 CNY', value: 'CNY' },
-                    { label: '美元 USD', value: 'USD' },
-                    { label: '欧元 EUR', value: 'EUR' },
-                    { label: '港币 HKD', value: 'HKD' },
-                    { label: '日元 JPY', value: 'JPY' },
-                  ]"
-                />
+                <NSelect v-model:value="form.currency" :options="currencyOptions" />
               </NFormItem>
             </NGridItem>
           </NGrid>
@@ -320,14 +371,16 @@ function kindLabel(kind: string) {
               :modes="['hex']"
               :show-alpha="false"
               :swatches="colorPresets"
+              @update:value="colorTouched = true"
             />
+            <NText depth="3" class="hint">&nbsp;默认按账本名自动配色</NText>
           </NFormItem>
           <NFormItem v-if="!editing" label="默认账户">
             <NSwitch v-model:value="form.with_default_accounts" />
-            <NText depth="3" class="hint">&nbsp;开启后自动创建现金/银行卡/信用卡/虚拟账户 4 个</NText>
+            <NText depth="3" class="hint">&nbsp;自动创建默认账户（现金 / 支付宝 / 微信 / 银行卡 / 信用卡）</NText>
           </NFormItem>
           <NFormItem label="备注">
-            <NInput v-model:value="form.note" type="textarea" :autosize="{ minRows: 2, maxRows: 4 }" />
+            <NInput v-model:value="form.note" type="textarea" :autosize="{ minRows: 2, maxRows: 4 }" placeholder="可选" />
           </NFormItem>
         </NForm>
         <template #footer>
@@ -351,6 +404,7 @@ function kindLabel(kind: string) {
             <li>账户 / 分类 / 标签</li>
             <li>预算 / 周期 / 订阅 / 目标</li>
             <li>借贷台账</li>
+            <li>账单截图附件</li>
             <li>成员关系</li>
           </ul>
         </NAlert>

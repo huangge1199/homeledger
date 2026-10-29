@@ -199,8 +199,9 @@ export const AdminApi = {
     api.delete(`/admin/ledgers/${id}`, { data: { confirm }, headers: { 'Content-Type': 'application/json' } }).then((r) => r.data),
   // members
   members: () => api.get('/admin/members').then((r) => r.data.data),
+  // 后端统一返回 { ok, data }，此处需再解一层才能拿到 code / invite_url
   inviteMember: (payload: { role: string; days: number }) =>
-    api.post('/admin/members/invite', payload, { headers: { 'Content-Type': 'application/json' } }).then((r) => r.data),
+    api.post('/admin/members/invite', payload, { headers: { 'Content-Type': 'application/json' } }).then((r) => r.data.data),
   updateMember: (id: number, payload: Record<string, unknown>) =>
     api.patch(`/admin/members/${id}`, payload, { headers: { 'Content-Type': 'application/json' } }).then((r) => r.data),
   removeMember: (id: number) => api.delete(`/admin/members/${id}`).then((r) => r.data),

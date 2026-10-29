@@ -19,11 +19,15 @@ router.use(auth.csrfProtect);
 // 当前会话信息（无登录返 200 ok=false，方便前端判别场景）
 router.get('/session', (req, res) => {
   const u = res.locals.user || null;
+  // 账本行补 camelCase 别名：前端 store 的 Ledger 接口声明 isArchived，
+  // 而 res.locals.ledgers 是数据库原始行（is_archived），漏补会导致
+  // 「归档账本只读」判定失效（canWrite / canManage 恒为真）
+  const mapLedger = (l) => (l ? { ...l, isArchived: !!l.is_archived } : l);
   api.ok(res, {
     // 前端 store 按 camelCase 消费（见 web/src/stores/session.ts），此处补齐别名
     user: u ? { ...u, displayName: u.display_name || u.username, isAdmin: !!u.is_admin } : null,
-    ledger: res.locals.ledger || null,
-    ledgers: res.locals.ledgers || [],
+    ledger: mapLedger(res.locals.ledger),
+    ledgers: (res.locals.ledgers || []).map(mapLedger),
     csrf: auth.csrfToken(req),
     aiUsable: !!res.locals.aiUsable,
     needsSetup: !!res.locals.needsSetup,
