@@ -629,7 +629,7 @@ B1 第二轮修复（用户截图反馈后）：
 | D4 | 周期账单 | `recurring.ejs` | `RecurringView.vue` | 已确认 | 见下方修复清单（10 项）；**卡片标题改回 `b.name`、补已暂停/自动记账/仅提醒 chips、补下次+上次执行、抽屉精简 `day_of_month/weekday/interval_n/to_account_id`、auto_post 默认改 true** |
 | D5 | 订阅扣费 | `subscriptions.ejs` | `SubscriptionsView.vue` | 已确认 | 见下方修复清单（2 个隐性缺陷 + 16 项功能补齐 + 币种符号支持）；**统计卡全为 0 的致命 bug 已修，分组/月均/历史扣费/管理页外链已补齐** |
 | D6 | 借贷台账 | `debts.ejs` | `DebtsView.vue` | 已确认 | 口径归一、create_txn、部分核销、PUT 编辑、排序/删除保护已修 |
-| D7 | 储蓄目标 | `goals.ejs` | `GoalsView.vue` | 待修 | |
+| D7 | 储蓄目标 | `goals.ejs` | `GoalsView.vue` | 已确认 | PUT 编辑/新建已存金额/状态统一 done/达成通知/排序/卡片补齐已修 |
 
 #### D5 订阅扣费修复（2026-10-27）
 
@@ -768,11 +768,31 @@ B1 第二轮修复（用户截图反馈后）：
 
 ---
 
+#### D7 储蓄目标修复（2026-10-29）
+
+以老版 `src/views/goals.ejs`（77 行）+ `src/routes/planning.js`（335-406 行）为行为基准，补齐 `api.v1.planning.js` 储蓄段 5 处差异并对齐 `GoalsView.vue` 卡片与表单。
+
+**5 项修复**（按清单 D7-1/2/5/6/7 执行，跳过取负数/生成流水开关两项）：
+
+| # | 差异 | 根因 | 修法 | 文件 |
+|---|---|---|---|---|
+| 1 | **编辑目标靠「新建 + 迁移存款 + 删旧」** | v1 没有 PUT 接口，前端用 `GoalsApi.create` + `GoalsApi.deposit` + `GoalsApi.remove` 模拟 → 每次编辑都会多生成一笔交易、旧 `saved_cents` 作为「从旧目标迁移」的支出流水 | 后端新增 `PUT /goals/:id`（校验存在 + 改 name/icon/target_cents/account_id/target_date/status/note，名称截 30、备注截 200）；前端 `onSubmit` 编辑分支直接调 `GoalsApi.update`，删除三段式模拟 | `api.v1.planning.js`、`modules.ts`、`GoalsView.vue` |
+| 2 | **新建目标固定 saved_cents=0，不支持已存金额** | `POST /goals` SQL 第 5 个值硬编码 `0`，表单无该字段 | SQL 参数改读 `req.body.saved_amount`；前端新建抽屉新增「已存金额」（编辑时隐藏，避免与 PUT 口径冲突）；已存 ≥ 目标且状态为 active 时自动置 `done`（对齐老版 `needPerMonth` 口径） | `api.v1.planning.js`、`GoalsView.vue` |
+| 3 | **达成状态值分裂** | 老版写 `done`、v1 写 `achieved`，DB 里两套并存 | v1 达成检测统一写 `done`；创建/更新接口 `status` 白名单同时接受 `active/done/achieved/archived`，读侧兼容历史 `achieved`；前端状态下拉改 `done`，`openEdit` 把 `achieved` 映射成 `done` | `api.v1.planning.js`、`GoalsView.vue` |
+| 4 | **达成无通知** | 老版 deposit 达成就 `auth.notify` 所有账本可写成员；v1 只改状态 | 达成分支补 `for (const uid of auth.ledgerWriterIds(ledgerId)) auth.notify(uid, {kind:'success', title:'🎉 储蓄目标达成：xxx', link:'/goals'})`，但只在原状态是 `active` 时发（避免反复存入重复通知） | `api.v1.planning.js` |
+| 5 | **排序反了 + 卡片缺字段** | `ORDER BY g.status ASC` 字母序把 `achieved` 排最前；卡片无「已达成」标签、「已逾期 N 天」、「每月需存 X」、备注 | 排序改 `CASE WHEN g.status='active' THEN 0 ELSE 1 END ASC, g.id ASC`；卡片头补 NTag「已达成」、备注行、footer 补「还有 N 天 / 已逾期 N 天」（允许负数）与「每月需存 X」（剩余金额/剩余月数，四舍五入到分）；次信息文案对齐老版「存入账户」「目标日」 | `api.v1.planning.js`、`GoalsView.vue` |
+
+**验证**：`npm run build` 0 错误、`node --check src/routes/api.v1.planning.js` 通过。
+
+**注意**：后端 `api.v1.planning.js` 有改动，**需重启 5111 生效**。
+
+---
+
 ### E 组｜数据
 
 | # | 页面 | 旧文件 | 新文件 | 状态 | 差异备注 |
 |---|---|---|---|---|---|
-| E1 | 分类管理 | `categories.ejs` | `CategoriesView.vue` | 待修 | |
+| E1 | 分类管理 | `categories.ejs` | `CategoriesView.vue` | 已确认 | 顶部提示卡、一级分类合计、颜色自定义输入已补齐 |
 | E2 | 标签管理 | `tags.ejs` | `TagsView.vue` | 待修 | |
 | E3 | 账单导入 | `import.ejs` | `ImportView.vue` | 待修 | |
 | E4 | 导出备份 | `export.ejs` | `ExportView.vue` | 待修 | |
@@ -886,7 +906,7 @@ B1 第二轮修复（用户截图反馈后）：
 | P3 | G1~G7 | 裸页，改动相对独立 |
 
 > A3（全局 CSRF）已随 C2 一并处理并实测通过 ✅ 已确认。
-> **P0/P1 已全部完成**，D2/D3/D4/D6 已确认。下一项按顺序为 **P2：D7 储蓄目标**。
+> **P0/P1 已全部完成**，D2/D3/D4/D6/D7/E1 已确认。下一项按顺序为 **P2：E2 标签管理**。
 
 ---
 
@@ -919,3 +939,5 @@ B1 第二轮修复（用户截图反馈后）：
 | 2026-10-28 | C2 | 搜索筛选按老版 `search.ejs` 重写 `SearchView.vue`，并修后端 `api.v1.dashboard.js` 的老版遗留 bug。**1 个致命缺陷（整页白屏）**：`NDatePicker` 的 `v-model:value` 直接绑 `f.from`/`f.to`（初值 `''` 字符串），naive 只收毫秒时间戳 → `RangeError: Invalid time value` → setup 中断、组件不渲染（dev 下 body 长度 0，生产构建渲染成空壳 `<div class="undefined-date-picker">`）→ 改用项目已有的 `DatePickerWrap.vue`。**11 项行为缺陷**：① **按成员筛选永远返回 0 条** —— 后端 `hasQuery` 用 `Object.values(f).some(v => v !== 1 && v !== 30 ...)` 判断，把 **`memberId === 1`（第一个成员）误判成「没有条件」**（老版遗留 bug），改为显式列举业务筛选项数组判断；② 前端取 `m.id`（成员关系行 ID）而老版用 `m.user_id`（用户 ID），后端 `t.user_id = ?` 匹配的是用户 ID → 改为 `m.user_id`；③ 后端把按日分组放在响应**顶层** `data.groups`，前端读的是 `data.result.groups` → 结果列表恒显示「还没有记录」，改为读 `d.groups`；④ 结果列表改用 `TxnList.vue` 组件（用户确认方案，与明细页同风格，符号/时刻/来源/附件徽标自动对齐）；⑤ 分类下拉补**二级分类层级路径**（`支 · 餐饮/早餐`，一级分类不作选项）；⑥ 补「来源」筛选（全部/手动记账/AI 截图/AI 文字/账单导入/周期账单）；⑦ 排序文案回老版（最新在前/最早在前/金额从大到小/金额从小到大）；⑧ 关键词提示语回老版「关键字：备注 / 商家 / 分类 / 金额」，金额输入框加 `¥` 前缀；⑨ 全部筛选条件**同步到 `route.query`**（刷新/分享可还原）。**A3 全局 CSRF 一并收尾**：新增 `web/src/api/csrfFetch.ts`（自动注入 `X-CSRF-Token`、`credentials: 'include'`、401 自动跳登录、`skipCsrf` 开关），把 `stores/session.ts`（switchLedger/logout）、`views/SettingsView.vue`（createToken/revokeToken）、`views/LoginView.vue` 共 5 处裸 `fetch` 收敛。**第二轮修复（用户反馈补充）**：① `App.vue` 的 `NConfigProvider` 全局注入 `zhCN` + `dateZhCN`（全站 Select/DatePicker/Popconfirm 中文，解决无效 `:locale` prop 导致的英文 "Select Date"）；② 排序 `NSelect` 从筛选下拉行末尾挪到**日期行最后**（加 `.sort-select { margin-left: auto }` 推到行尾）；③ 结束日期 `disabledDate` 禁选早于起始、起始越界自动顺延结束日期到 23:59:59；④ 日期改 `type="datetime"` + 后端 SQL 从 `txn_date >= ?` 改为**拼接 `txn_date \|\| ' ' \|\| COALESCE(txn_time, '00:00:00')` 比较**（SQL 级别 bug：短日期字典序小会把起始日全排除）；⑤ 默认区间 `from=当月1号 00:00:00` / `to=今天 23:59:59`、`onMounted` 每次都搜、`reset()` 也恢复默认并重搜；⑥ 其他页面时间统一到秒（`AiView` 的 `NTimePicker format="HH:mm:ss"`）。**验证**：`npm run build` 0 错误；浏览器实测（临时 5112 实例 + 5111 用户实例）白屏修复、成员筛选 0 → 1369 条、分类+日期 15 笔、来源+金额 16 笔、分类名下钻 97 笔、翻页 2/20、`TxnList` 项含时刻/来源 chip/📎 徽标/正确收支符号、令牌创建→吊销全链路通过、全局 zhCN 生效、默认当月区间自动出结果。**测试数据已清理**（令牌记录已删、临时日志已删）。**注意**：后端 `api.v1.dashboard.js`（hasQuery）+ `src/lib/txn.js`（日期拼接）均有改动，**需重启 5111 生效**。**已确认** |
 | 2026-10-29 | D4 | 周期账单按老版 `recurring.ejs` 对齐 `RecurringView.vue`（后端 `api.v1.planning.js` 的 API 层刻意简化成单 item，不改后端）。**10 项修复**：① 顶部补 `NAlert` 说明卡（周期账单是什么、自动记账 vs 仅提醒）；② 卡片标题由 `b.note \|\| TXN_TYPE_MAP.label` 改回 **`b.name`**（后端早已返回）；③ 标题旁 chips 由 footer 移到 header，补**已暂停 / 自动记账 / 仅提醒**三态；④ 次信息行补 `freqLabel + （每 N 期）` + **下次执行（加粗醒目）** + **上次执行日期**（新版原有但未显示）；⑤ 右侧金额下补「1 项」（老版多 item 聚合口径，本版 API 单 item 恒为 1）；⑥ 操作按钮顺序回老版：**立即记一笔（主按钮）/ 暂停·启用 / 编辑 / 删除**，文案「补登」→「立即记一笔」；⑦ 抽屉类型去掉 **transfer**，只留支出/收入，分类下拉按 type kind 过滤；⑧ 抽屉**精简 4 个底层字段**（`day_of_month`/`weekday`/`interval_n`/`to_account_id`），频率改为按月/周/年/日换算，对齐老版表单；⑨ `auto_post` 默认值 `false` → **`true`**（对齐老版默认勾选）；⑩ 保留新版有理增强（商户/备注）。**架构决策**：老版多 item 明细列表（`recurring_items` 子表）因 API 层只暴露 1 项，本轮不做，如需扩展需改后端 `parseRecurringRule` 返回数组。`npm run build` 0 错误。**已确认** |
 | 2026-10-29 | D6 | 借贷台账按老版 `debts.ejs` + `routes/planning.js` 重写 `api.v1.planning.js` 借贷段并补齐 `DebtsView.vue`。**6 个缺陷**：① **direction 口径分裂** —— `syncDebts()` 写 `receivable`/`payable` 而 API 写 `lend`/`borrow` → 自动汇总记录被误显示成「借入」且结算方向判反（GET 时统一归一化并返回 `raw_direction`/`is_auto`/`is_settled`）；② **不生成账户流水** —— 老版勾选 `create_txn` 时只建交易（台账由 `syncDebts` 汇总），新版从不建（已补该分支，为真时不插 debts 表）；③ **不支持部分还款** —— 固定全额核销（改为按 `amount` 递减 `balance_cents`，未清零保持 `open`）；④ **排序反了** —— `ORDER BY status ASC` 让已结清排最前（改 `CASE WHEN open` 优先 + 到期日升序 + `LIMIT 300`）；⑤ **引用不存在的 `counter_account_id` 列**（已删）；⑥ **删除无保护** —— 自动汇总记录可被删（已按 `note` 拦截）。**用户决策（方案 B）保留编辑按钮** → 后端新增 `PUT /debts/:id`（自动汇总不允许编辑；改本金时重置余额与状态）。**前端补齐 7 项**：统计卡对齐老版 4 张（未结借出/未结借入/净头寸/已结清，净头寸=应收−应付且配色随正负）、卡片头 chip（应收/应付/自动/已结清/已逾期）、金额区大字改剩余余额+小字本金、按钮文案按方向（收款核销/还款核销）且编辑删除对自动汇总隐藏、筛选卡右侧补「近 3 天到期的会自动提醒」、新建抽屉删「对方账户（可选）」并补「生成账户流水」开关（默认开）、结算抽屉补「本次核销金额」+ 实时剩余提示。`npm run build` 0 错误、`node --check` 通过。**注意**：后端 `api.v1.planning.js` 有改动，**需重启 5111 生效**。**已确认** |
+| 2026-10-29 | D7 | 储蓄目标按老版 `goals.ejs` + `routes/planning.js` 补齐。**5 项修复**（跳过取负数/生成流水开关两项）：① 后端新增 `PUT /goals/:id`（直接改字段），前端编辑从「新建+迁移存款+删旧」改为直接 update，**不再多生成交易**；② `POST /goals` 支持 `saved_amount` 参数，新建抽屉补「已存金额」（编辑时隐藏），已存≥目标自动置 `done`；③ 达成状态统一 `done`（老版是 `done`、v1 之前写 `achieved`），创建/更新白名单同时接受两套值，前端 `openEdit` 把历史 `achieved` 映射成 `done`；④ 达成就 `auth.notify` 所有账本可写成员，仅首次达成发一次；⑤ 排序改「进行中优先」，卡片补「已达成」标签、备注、「还有 N 天 / 已逾期 N 天」（允许负数）、「每月需存 X」。`npm run build` 0 错误、`node --check` 通过。**注意**：后端 `api.v1.planning.js` 有改动，**需重启 5111 生效**。**已确认** |
+| 2026-10-29 | E1 | 分类管理按老版 `categories.ejs` 补 `CategoriesView.vue`（后端 `api.v1.accounts.js` 分类段与老版一致，**无需改动**）。**3 项修复**（用户只勾选 E1-1/2/5）：① 顶部补提示卡「系统内置了 N 个一级分类、M 个二级分类…」，数量取真实数据（一级=支出+收入大类数、二级=`flat` 中有 `parent_id` 的条数）；② 一级分类标题右侧金额改为「合计 ¥X」，= 大类自身近一年统计 + 所有子类统计之和；③ 颜色保留 9 色预设下拉，末尾加「🎨 自定义」，选中后出现 hex 输入框 + 色块预览，提交时非合法 hex 回落 `#8c8c8c`；编辑时若原色不在预设自动显示「自定义」并回填。`npm run build` 0 错误。**已确认** |
