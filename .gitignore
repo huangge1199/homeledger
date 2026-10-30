@@ -13,5 +13,3 @@ ui-*.png
 _cc.txt
 .screenshots/
 __pycache__/
-
-package-lock.json
