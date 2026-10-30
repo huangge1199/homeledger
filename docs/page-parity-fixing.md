@@ -805,7 +805,7 @@ B1 第二轮修复（用户截图反馈后）：
 |---|---|---|---|---|---|
 | F1 | 账本管理 | `ledgers.ejs` | `LedgersView.vue` | 待确认 | 见下方修复清单（9 项前端差异 + 1 个后端隐性缺陷）；**有意偏离：保留新版卡片式布局 + 抽屉表单（老版为内联展开表单）** |
 | F2 | 成员权限 | `members.ejs` | `MembersView.vue` | 待确认 | 见下方修复清单（2 致命 + 4 隐性 + 9 功能缺失）；**有意偏离：保留新版 NDataTable 表格 + 抽屉表单（老版为卡片行内编辑）** |
-| F3 | 通知中心 | `notifications.ejs` | `NotificationsView.vue` | 待修 | 需同步 `session.setUnread()` |
+| F3 | 通知中心 | `notifications.ejs` | `NotificationsView.vue` | 待确认 | 见下方修复清单（4 致命/隐性 + 4 表现差异）；**有意偏离：保留新版筛选卡 + kind 标签 + 整行可点（老版为纯列表 + 「查看」按钮）** |
 | F4 | 设置 | `settings.ejs`（25KB，最大） | `SettingsView.vue` | 已确认 | 见下方修复清单（回归老版 6 个 tab + 4 个隐性缺陷 + 3 个运行时缺陷）；**修复后即可在设置页配好 AI，B6/B7 的完整验证前提已具备** |
 | F5 | 关于 | `about.ejs` | `AboutView.vue` | 待修 | |
 
@@ -887,6 +887,34 @@ B1 第二轮修复（用户截图反馈后）：
 **有意偏离老版一处（用户确认）**：老版为**卡片式成员列表 + 行内下拉编辑**（角色 select 与昵称输入框直接排在成员行下方），新版保留 **NDataTable 表格 + 抽屉编辑**（用户决策：保留新版表格），老版信息全部在表格列中补齐。
 
 **验证**：`npm run build`（`vue-tsc --noEmit && vite build`）**0 错误、exit 0**（改动后重跑两次）；`GetDiagnostics` 无诊断。**未启动/停止任何服务实例**（按约定由用户手动控制）。后端 `api.v1.admin.js` 与老版 `admin.js` 行为一致，**F2 无后端改动**，无需重启（若同时应用 F1 的 `apiV1.js` 改动则需重启 5111）。
+
+#### F3 通知中心修复（2026-10-30）
+
+以老版 `d:\project\homeledger-old\src\views\notifications.ejs`（40 行）为行为基准，逐项比对新版 `web/src/views/NotificationsView.vue`。
+
+**后端核对结论**：`src/routes/api.v1.dashboard.js` 的 `GET /notifications`（`SELECT n.*, l.name AS ledger_name ... ORDER BY n.is_read, n.id DESC LIMIT 200`）、`POST /notifications/read-all`、`POST /notifications/:id/read` 与老版 `src/routes/dashboard.js` **逐行一致**，字段无差异 → **F3 无后端改动**。
+
+**致命 / 隐性缺陷（4 项）**
+
+| # | 缺陷 | 现象 | 改法 | 影响文件 |
+|---|---|---|---|---|
+| 1 | **未读徽标不同步** | 老版侧栏 `unreadCount` 由 `auth.js` 每次请求全表 COUNT 得出；新版 `markRead()` / `markAll()` 都没调 `session.setUnread()` → 标记已读后侧栏红点不消（文档 F3 行原本标注的遗留项） | 标记单条已读 → `session.setUnread(session.unreadCount - 1)`；全部已读 → `session.setUnread(0)`。**注意口径差异**：页面内 `unreadCount` 是「最近 200 条内」的未读数，侧栏徽标是**全表**未读数，两者不能直接互相回填，只能按「减 1」推算 | `NotificationsView.vue` |
+| 2 | **`kind='success'` 图标缺失** | 老版 `success → 🎉`；新版 `kindMeta` 无 `success` 键 → 「储蓄目标达成」通知落到默认 `🔔`（后端确有 `kind:'success'`，见 `api.v1.planning.js:520`） | `kindMeta` 补 `success: { icon: '🎉', tone: 'success', label: '达成' }`，并补 `.ico.tone-success` 配色 | `NotificationsView.vue` |
+| 3 | **通知跳转目标路由缺失** | 订阅通知的 `link` 是 `/subscriptions/{id}/edit`（`src/lib/subscriptions.js:323`），老版有独立编辑页；新版路由表只有 `/subscriptions` → 点「订阅未能自动记账」的通知直接落到 404 | 路由表补 `/subscriptions/:id(\\d+)/edit` → `SubscriptionsView.vue`；该视图按 `route.params.id` 定位订阅并自动弹出编辑抽屉，抽屉关闭时把地址栏还原成 `/subscriptions` | `router/index.ts`、`SubscriptionsView.vue` |
+| 4 | **正文裸露内部去重键** | 调度器写入的 `body` 末尾拼了 `\|<dedupeKey>`（如 `已用 12.00 / 20.00（60%）\|budget:12:2026-10:over`），新版直接输出 → 用户看到内部幂等键 | 新增 `utils/format.ts` 的 `stripDedupeSuffix()`，按通用规则 `/\s*\|[a-z][a-z-]*:.*$/i` 清掉全部 `\|<key>:<value>` 后缀（**超越老版**：老版只清了 `budget/debt/goal` 三种，`recurring:*`、`sub-*` 系列仍会裸露，老版自身也有这缺陷） | `utils/format.ts`、`NotificationsView.vue` |
+
+**功能 / 表现差异（4 项）**
+
+| # | 项 | 老版 | 新版改法 |
+|---|---|---|---|
+| 5 | 时间显示 | 绝对时间 `fmtDateTime` → `2026-10-30 14:23` | 主显绝对时间（复用 `utils/format.ts` 新增的 `fmtDateTime`），相对时间降级为悬浮 `title` 提示。顺带修正原 `timeAgo()` 超 7 天分支用 `toISOString()`（UTC）导致**凌晨 0~8 点日期少一天**的缺陷，改为本地日期拼接 |
+| 6 | link 呈现 | 只给「查看」按钮，不露路径 | 移除裸露的 `→ /subscriptions/12/edit` 路径文本，改为右侧「查看」按钮（对齐老版）；正文区仍可点击跳转（保留新版整行可点） |
+| 7 | 空态文案 | 「还没有通知」+「预算超支、账单到期、借贷到期时会在这里提醒你」 | 文案回退老版原文 |
+| 8 | 「全部标为已读」按钮 | 常显 | 改为常显但无未读时 `disabled`（老版常显且可点，新版避免空操作） |
+
+**有意偏离老版（用户确认保留新版）**：保留「全部 / 未读」筛选卡、kind 文字标签、未读行高亮底色（老版是已读行变淡，方向相反但作用等价）、整行可点（老版仅「查看」按钮可点）、刷新按钮、相对时间作为辅助提示。
+
+**验证**：`npm run build`（`vue-tsc --noEmit && vite build`）**0 错误、exit 0**。**未启动/停止任何服务实例**（按约定由用户手动控制）。**F3 纯前端改动，无需重启后端**。
 
 #### F4 设置修复（2026-10-27）
 
@@ -985,7 +1013,7 @@ B1 第二轮修复（用户截图反馈后）：
 | P3 | G1~G7 | 裸页，改动相对独立 |
 
 > A3（全局 CSRF）已随 C2 一并处理并实测通过 ✅ 已确认。
-> **P0/P1 及 P2 的 D2~D7、E1~E4 已全部完成并确认**。F 组已修 **F4（已确认）、F1（待确认）、F2（待确认）**；下一项按顺序为 **F3 通知中心**（F5 随后）。
+> **P0/P1 及 P2 的 D2~D7、E1~E4 已全部完成并确认**。F 组已修 **F4（已确认）、F1（待确认）、F2（待确认）、F3（待确认）**；下一项按顺序为 **F5 关于**。
 
 ---
 
@@ -1025,3 +1053,4 @@ B1 第二轮修复（用户截图反馈后）：
 | 2026-10-29 | E4 | 导出备份按老版 `export.ejs` 重写 `ExportView.vue`（后端 `/export/csv`、`/export/json`、`/backup/db`、`/backup/restore` 一直存在，**无后端改动**）。**1 个致命缺陷**：① 前端拼 `/export?year=&format=`，但 `/export` 在新项目里只 `sendFile` 渲染 SPA、**后端没有 year/format 实现** → 点「下载」只是新开一个同样的页面，**完全不产生文件**，已改回老版实存接口 `/export/csv` 与 `/export/json`。**10 项修复**：② 新增「导出账单（CSV）」卡（起始默认当年 01-01、结束今天）；③ 补「类型（可选）」「账户（可选）」筛选（对齐后端 `type`/`account_id`）；④ 新增「导出完整数据（JSON）」卡（当前账本全量表导出）；⑤ 「有数据的年度」表保留（用户决策 B），快捷按钮改为「导出 Y 年 CSV（Y-01-01~Y-12-31）」+「完整 JSON」；⑥ 删除 Excel(xlsx) 格式（后端无实现）；⑦ **删除两个假开关**「包含转账/中性记录」「包含已删除交易」——后端 `/export/csv` 不识别 `incl_transfer`/`incl_deleted`，勾选与否结果完全一样；⑧ 年度下拉默认值不在选项里的问题随结构改版消除；⑨ 补「NAS 部署与备份建议」卡（老版 4 条原文）；⑩ 按老版版式把「💾 数据库文件备份」并入 JSON 卡（divider 分隔），恢复卡保留「高风险操作」chip 与非管理员隐藏逻辑；⑪ 保留「导出字段说明」卡（新版增强），删除误导性的「导出走 SSR 端 `/export` 接口」提示。`npm run build` 0 错误。**已确认** |
 | 2026-10-29 | E1 | 分类管理按老版 `categories.ejs` 补 `CategoriesView.vue`（后端 `api.v1.accounts.js` 分类段与老版一致，**无需改动**）。**3 项修复**（用户只勾选 E1-1/2/5）：① 顶部补提示卡「系统内置了 N 个一级分类、M 个二级分类…」，数量取真实数据（一级=支出+收入大类数、二级=`flat` 中有 `parent_id` 的条数）；② 一级分类标题右侧金额改为「合计 ¥X」，= 大类自身近一年统计 + 所有子类统计之和；③ 颜色保留 9 色预设下拉，末尾加「🎨 自定义」，选中后出现 hex 输入框 + 色块预览，提交时非合法 hex 回落 `#8c8c8c`；编辑时若原色不在预设自动显示「自定义」并回填。`npm run build` 0 错误。**已确认** |
 | 2026-10-29 | E2 | 标签管理按老版 `tags.ejs` 对齐 `TagsView.vue`，并修后端 `api.v1.accounts.js` 标签统计口径。**8 项修复**（用户全选，版式/新建入口/颜色均保留新版方案）：① 顶部补「标签是跨分类的横向维度…」提示卡；② 保留新版 3 张统计卡 + 网格版式，卡片头补「全部标签 · N 个」；③ 标签名改为 `RouterLink` 跳 `/search?tag_id=N`（老版跳 `/transactions`），点击即看该标签全部交易；④ 保留抽屉新建/编辑入口；⑤ 颜色沿用 E1 方案：预设下拉 + 「🎨 自定义」hex 输入兜底，非法值回落 `#4f7cff`，编辑非预设色自动回填；⑥ 空态改 🔖 + 老版文案（「在记账时直接填写标签名即可创建…」）；⑦ **编辑/删除按钮改为常显** —— 原 `opacity: 0` + hover 才出现，移动端完全点不到（与 D1 同类缺陷）；⑧ **后端 `cnt` 改为 JOIN transactions 并过滤 `deleted_at IS NULL`** —— 原 `COUNT(*) FROM transaction_tags` 把软删除交易也算进笔数，与 `total` 口径不一致。`npm run build` 0 错误、`node --check` 通过。**注意**：后端 `api.v1.accounts.js` 有改动，**需重启 5111 生效**。**已确认** |
+| 2026-10-30 | F3 | 通知中心按老版 `notifications.ejs`（40 行）逐项对齐 `NotificationsView.vue`（用户决策：保留新版结构，只补齐老版能力；修复范围=全量 8 项）。**后端核对**：`api.v1.dashboard.js` 的 `/notifications`（`SELECT n.*, l.name AS ledger_name ... ORDER BY n.is_read, n.id DESC LIMIT 200`）、`/notifications/read-all`、`/notifications/:id/read` 与老版 `routes/dashboard.js` **逐行一致**，**无后端改动**。**4 个致命/隐性缺陷**：① **未读徽标不同步** —— `markRead()`/`markAll()` 都没调 `session.setUnread()` → 标记已读后侧栏红点不消（文档 F3 行原本标注的遗留项），已按「减 1」推算同步（页面内 `unreadCount` 是最近 200 条内口径，侧栏徽标是全表口径，不能直接互相回填）；② **`kind='success'` 图标缺失** —— 老版 `success → 🎉`，新版 `kindMeta` 无此键 → 「储蓄目标达成」通知落到默认 `🔔`（后端确有 `kind:'success'`），已补 `success` 映射 + `.ico.tone-success` 配色；③ **通知跳转目标路由缺失** —— 订阅通知 `link` 是 `/subscriptions/{id}/edit`（`src/lib/subscriptions.js:323`），新版路由表只有 `/subscriptions` → 点该通知直接 404，已补 `/subscriptions/:id(\\d+)/edit` 路由并让 `SubscriptionsView.vue` 按 `route.params.id` 自动弹出编辑抽屉（抽屉关闭后地址栏还原 `/subscriptions`）；④ **正文裸露内部去重键** —— 调度器写的 `body` 末尾拼 `\|<dedupeKey>`，新版直接输出 → 用户看到 `已用 12.00 / 20.00（60%）\|budget:12:2026-10:over`，新增 `utils/format.ts` 的 `stripDedupeSuffix()` 按通用规则清掉全部 `\|<key>:<value>`（**超越老版**：老版只清 `budget/debt/goal` 三种，`recurring:*`/`sub-*` 仍裸露，老版自身也有此缺陷）。**4 项表现差异**：⑤ 时间改主显绝对时间 `2026-10-30 14:23`（新增 `utils/format.ts` 的 `fmtDateTime`），相对时间降级为悬浮 `title`，并顺带修原 `timeAgo()` 超 7 天分支用 `toISOString()`（UTC）导致凌晨少一天的缺陷；⑥ 移除裸露的 `→ /subscriptions/12/edit` 路径文本，改回老版「查看」按钮；⑦ 空态文案回老版「还没有通知 / 预算超支、账单到期、借贷到期时会在这里提醒你」；⑧ 「全部标为已读」改为常显、无未读时 `disabled`。**有意偏离**：保留筛选卡、kind 标签、未读行高亮、整行可点、刷新按钮。`npm run build` 0 错误。**F3 纯前端改动，无需重启后端**。**待确认** |

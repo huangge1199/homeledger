@@ -63,6 +63,8 @@ const routes: RouteRecordRaw[] = [
   { path: '/budgets',        component: () => import('@/views/BudgetsView.vue'),        meta: { title: '预算管理', icon: '💰' } },
   { path: '/recurring',      component: () => import('@/views/RecurringView.vue'),      meta: { title: '周期账单', icon: '🔁' } },
   { path: '/subscriptions',  component: () => import('@/views/SubscriptionsView.vue'),  meta: { title: '订阅扣费', icon: '🔔' } },
+  // 通知中心「订阅未能自动记账」的跳转目标（老版是独立编辑页，新版是抽屉）
+  { path: '/subscriptions/:id(\\d+)/edit', component: () => import('@/views/SubscriptionsView.vue'), meta: { title: '编辑订阅', icon: '🔔' } },
   { path: '/debts',          component: () => import('@/views/DebtsView.vue'),          meta: { title: '借贷台账', icon: '🤝' } },
   { path: '/goals',          component: () => import('@/views/GoalsView.vue'),          meta: { title: '储蓄目标', icon: '🎯' } },
 

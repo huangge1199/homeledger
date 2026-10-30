@@ -17,6 +17,25 @@ export function initials(name?: string | null): string {
 }
 
 /**
+ * 日期时间格式化（对齐老版 src/lib/util.js 的 fmtDateTime）
+ * "2026-10-30 14:23:05" → "2026-10-30 14:23"
+ */
+export function fmtDateTime(d?: string | null): string {
+  return d ? String(d).slice(0, 16) : ''
+}
+
+/**
+ * 清洗通知正文里的去重键后缀
+ * 调度器写入的 body 末尾会拼接 `|<dedupeKey>`（如 |budget:12:2026-10:over），
+ * 那是内部幂等键，不能展示给用户。老版只清了 budget/debt/goal 三种，
+ * 这里按通用规则清掉全部 `|<key>:<value>` 形式的后缀。
+ */
+export function stripDedupeSuffix(body?: string | null): string {
+  if (!body) return ''
+  return String(body).replace(/\s*\|[a-z][a-z-]*:.*$/i, '').trim()
+}
+
+/**
  * 由字符串稳定生成颜色（对齐后端 src/lib/util.js 的 colorFor）
  * 老版新建账本不提供颜色输入，后端按账本名自动配色，这里保持一致
  */

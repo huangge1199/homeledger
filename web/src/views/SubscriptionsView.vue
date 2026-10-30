@@ -6,6 +6,7 @@ import {
   NSwitch, useMessage, NDatePicker,
 } from 'naive-ui'
 import dayjs from 'dayjs'
+import { useRoute, useRouter } from 'vue-router'
 import AppShell from '@/layouts/AppShell.vue'
 import PageHead from '@/components/PageHead.vue'
 import Empty from '@/components/Empty.vue'
@@ -18,6 +19,8 @@ import { useSessionStore } from '@/stores/session'
 import { currencySymbol } from '@/utils/money'
 
 const session = useSessionStore()
+const route = useRoute()
+const router = useRouter()
 const { success, error: toastError } = useFlash()
 const message = useMessage()
 
@@ -79,9 +82,31 @@ async function loadOptions() {
 
 onMounted(async () => {
   await loadOptions()
-  load()
+  await load()
+  await syncRouteEdit()
 })
 watch(() => session.currentLedger?.id, load)
+
+/**
+ * 通知中心「订阅未能自动记账」的跳转目标是 /subscriptions/:id/edit，
+ * 这里按路由参数定位到对应订阅并自动打开编辑抽屉（老版是独立编辑页）。
+ */
+async function syncRouteEdit() {
+  const id = Number(route.params.id || 0)
+  if (!id) return
+  const s = items.value.find((x: any) => Number(x.id) === id)
+  if (!s) {
+    message.warning('订阅不存在或已删除')
+    router.replace('/subscriptions')
+    return
+  }
+  await openEdit(s)
+}
+watch(() => route.params.id, syncRouteEdit)
+// 抽屉关闭后把地址栏还原成列表页，避免刷新时又自动弹出
+watch(drawerOpen, (v) => {
+  if (!v && route.params.id) router.replace('/subscriptions')
+})
 
 const accountOptions = computed(() => [
   ...accounts.value.map((a: any) => ({ label: `${a.icon} ${a.name}`, value: a.id })),
