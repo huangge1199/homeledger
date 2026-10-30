@@ -48,7 +48,9 @@ function fmtSize(n) {
   return n + ' B';
 }
 
-router.get('/about', auth.requireLogin, api.asyncHandler((req, res) => {
+// 注意：本文件在 apiV1.js 中以 router.use('/about', ...) 挂载，
+// 前缀已被剥掉，这里必须挂 '/'，否则实际路径会变成 /api/v1/about/about 而 404。
+router.get('/', auth.requireLogin, api.asyncHandler((req, res) => {
   const isAdmin = !!(res.locals.user && res.locals.user.is_admin);
   const dbSize = safeSize(DB_FILE);
   const uploadsSize = dirSize(path.join(DATA_DIR, 'uploads'));
