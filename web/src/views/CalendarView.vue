@@ -151,6 +151,17 @@ const top5Max = computed(() => Math.max(...top5.value.map((d) => Number(d.expens
 const selectedTitle = computed(() => relDate(selected.value))
 const selectedWeekday = computed(() => ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][dayjs(selected.value).day()])
 
+/** 选中日明细按消费时刻倒序（晚的在前；无时刻的排最后，同刻保持原顺序） */
+const sortedRows = computed(() => {
+  const rows: any[] = data.value?.selectedRows || []
+  return [...rows].sort((a, b) => String(b.txn_time || '').localeCompare(String(a.txn_time || '')))
+})
+
+/** 时刻显示 HH:mm:ss，无时刻留空占位 */
+function timeText(t: any) {
+  return String(t.txn_time || '') || '--:--:--'
+}
+
 /** 选中日支出/收入小计（老版 daySum，用 amount_base_cents 累加） */
 const daySum = computed(() => {
   const rows: any[] = data.value?.selectedRows || []
@@ -272,11 +283,12 @@ function relDate(dateStr: string) {
             </div>
             <div v-else class="day-list">
               <div
-                v-for="t in data.selectedRows"
+                v-for="t in sortedRows"
                 :key="t.id"
                 class="row"
                 @click="router.push(`/transactions/${t.id}`)"
               >
+                <div class="time">{{ timeText(t) }}</div>
                 <div class="ico" :class="TXN_TYPE_MAP[t.type]?.flow || 'neutral'">
                   {{ TXN_TYPE_MAP[t.type]?.icon || '·' }}
                 </div>
@@ -393,6 +405,11 @@ function relDate(dateStr: string) {
 .day .expense { color: var(--hl-expense, #e5484d); font-weight: 600; font-variant-numeric: tabular-nums; }
 
 .day-list { display: flex; flex-direction: column; }
+.row .time {
+  flex: none; width: 62px;
+  font-size: 12px; color: var(--hl-text-3, #9aa3b2);
+  font-variant-numeric: tabular-nums;
+}
 .row {
   display: flex; align-items: center; gap: 12px;
   padding: 10px 8px;
