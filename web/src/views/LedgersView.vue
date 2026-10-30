@@ -253,16 +253,6 @@ function kindLabel(kind: string) {
                 </div>
               </div>
             </template>
-            <template #header-extra>
-              <NSpace size="small">
-                <NButton v-if="session.currentLedger?.id !== Number(l.id) && !l.is_archived" size="tiny" type="primary" @click="onSwitch(l)">
-                  切换到该账本
-                </NButton>
-                <NButton size="tiny" quaternary @click="openEdit(l)">编辑</NButton>
-                <NButton size="tiny" quaternary @click="onArchive(l)">归档</NButton>
-                <NButton v-if="l.role === 'owner'" size="tiny" quaternary type="error" @click="openDelete(l)">删除</NButton>
-              </NSpace>
-            </template>
             <div class="stats-row">
               <div class="stat">
                 <div class="num">{{ l.txn_count || 0 }}</div>
@@ -278,6 +268,12 @@ function kindLabel(kind: string) {
               </div>
             </div>
             <div v-if="l.note" class="note">{{ l.note }}</div>
+            <div class="actions">
+              <NButton v-if="session.currentLedger?.id !== Number(l.id) && !l.is_archived" size="tiny" type="primary" @click="onSwitch(l)">切换到该账本</NButton>
+              <NButton size="tiny" @click="openEdit(l)">编辑</NButton>
+              <NButton size="tiny" @click="onArchive(l)">归档</NButton>
+              <NButton v-if="l.role === 'owner'" size="tiny" ghost type="error" @click="openDelete(l)">删除</NButton>
+            </div>
           </NCard>
         </div>
 
@@ -311,13 +307,6 @@ function kindLabel(kind: string) {
                   </div>
                 </div>
               </template>
-              <template #header-extra>
-                <NSpace size="small">
-                  <NButton size="tiny" type="primary" @click="onArchive(l)">取消归档</NButton>
-                  <NButton size="tiny" quaternary @click="openEdit(l)">编辑</NButton>
-                  <NButton v-if="l.role === 'owner'" size="tiny" quaternary type="error" @click="openDelete(l)">删除</NButton>
-                </NSpace>
-              </template>
               <div class="stats-row">
                 <div class="stat">
                   <div class="num">{{ l.txn_count || 0 }}</div>
@@ -333,6 +322,11 @@ function kindLabel(kind: string) {
                 </div>
               </div>
               <div v-if="l.note" class="note">{{ l.note }}</div>
+              <div class="actions">
+                <NButton size="tiny" type="primary" @click="onArchive(l)">取消归档</NButton>
+                <NButton size="tiny" @click="openEdit(l)">编辑</NButton>
+                <NButton v-if="l.role === 'owner'" size="tiny" ghost type="error" @click="openDelete(l)">删除</NButton>
+              </div>
             </NCard>
           </div>
         </template>
@@ -455,8 +449,9 @@ function kindLabel(kind: string) {
 }
 .meta { flex: 1; min-width: 0; }
 .title { font-size: 15px; font-weight: 500; display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
-.sub { font-size: 12px; color: var(--hl-muted); display: flex; gap: 4px; }
+.sub { font-size: 12px; color: var(--hl-muted); display: flex; gap: 4px; white-space: nowrap; }
 .sub .dot { opacity: .5; }
+.actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
 .stats-row {
   display: flex; gap: 8px; margin-top: 4px;
 }
