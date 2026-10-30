@@ -35,7 +35,6 @@ RUN npm ci --omit=dev --no-audit --no-fund
 # 拷贝后端源码
 COPY --chown=node:node server.js ./
 COPY --chown=node:node src ./src
-COPY --chown=node:node public ./public
 
 # 拷贝前端构建产物
 COPY --from=web-builder --chown=node:node /build/dist ./web/dist
