@@ -7,7 +7,7 @@ services:
     restart: unless-stopped
     ports:
       # 左侧是 NAS 上的访问端口，冲突可改；右侧保持 5111
-      - "5111:5111"
+      - "15111:5111"
     environment:
       TZ: Asia/Shanghai
       PORT: "5111"
