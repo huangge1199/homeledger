@@ -3,7 +3,8 @@ services:
     # 本地构建（与当前代码一致）。想用预构建镜像时注释掉 build，改为：
     #   image: ghcr.milu.moe/panda-995/homeledger:latest
     build: .
-    container_name: homeledger
+    container_name: my-homeledger
+    user: "0:0"
     restart: unless-stopped
     ports:
       # 左侧是 NAS 上的访问端口，冲突可改；右侧保持 5111
