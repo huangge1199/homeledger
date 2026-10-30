@@ -61,6 +61,14 @@ function cellHeat(c: any) {
 }
 
 /**
+ * 格内金额的小数位：≥1000 元且无角分时省略小数以省空间；
+ * 带 .5 这类非整数金额必须保留 2 位，否则四舍五入后（1230.50 → 1,231）与选中日汇总对不上
+ */
+function compactDigits(cents: number) {
+  return Number(cents) >= 100000 && Number(cents) % 100 === 0 ? 0 : 2
+}
+
+/**
  * 行内金额的带符号值：支出取负，保证 AmountDisplay 渲染成「-¥50.00」而非「+¥50.00」
  * （老版 calendar.ejs 是 is_income 加 +、is_expense 加 -，库里金额恒为正）
  */
@@ -115,7 +123,7 @@ const heatSvg = computed(() => {
     s += `<rect x="${x}" y="${y0}" width="${w}" height="${h}" rx="8" fill="${bg || 'var(--hl-card-2, #f7f8fb)'}" stroke="${isToday ? 'var(--hl-primary, #3d6df5)' : 'var(--hl-border, #e6eaf1)'}" stroke-width="${isToday ? 1.6 : 1}"/>`
     s += `<text x="${x + 9}" y="${y0 + 17}" font-size="12" font-weight="600" fill="${isToday ? 'var(--hl-primary, #3d6df5)' : 'var(--hl-text-2, #45516a)'}">${dayNum}</text>`
     if (Number(d.count) > 0) {
-      s += `<text x="${x + 9}" y="${(y0 + h - 18).toFixed(1)}" font-size="10.5" fill="var(--hl-expense, #e5484d)" font-weight="600">-${fmtPlain(d.expense, Number(d.expense) >= 100000 ? 0 : 2)}</text>`
+      s += `<text x="${x + 9}" y="${(y0 + h - 18).toFixed(1)}" font-size="10.5" fill="var(--hl-expense, #e5484d)" font-weight="600">-${fmtPlain(d.expense, compactDigits(d.expense))}</text>`
       if (Number(d.income) > 0) {
         s += `<text x="${x + 9}" y="${(y0 + h - 6).toFixed(1)}" font-size="10.5" fill="var(--hl-income, #12a150)" font-weight="600">+${fmtPlain(d.income, 2)}</text>`
       }
@@ -224,7 +232,7 @@ function relDate(dateStr: string) {
                   <div class="num">{{ c.day }}</div>
                   <div v-if="c.count > 0" class="info">
                     <div v-if="c.income > 0" class="income">+{{ fmtPlain(c.income, 2) }}</div>
-                    <div v-if="c.expense > 0" class="expense">-{{ fmtPlain(c.expense, c.expense >= 100000 ? 0 : 2) }}</div>
+                    <div v-if="c.expense > 0" class="expense">-{{ fmtPlain(c.expense, compactDigits(c.expense)) }}</div>
                   </div>
                 </div>
                 <div v-else class="day empty"></div>
