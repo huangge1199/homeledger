@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { NForm, NFormItem, NInput, NButton, NText, NAlert } from 'naive-ui'
 import { useMessage } from 'naive-ui'
 import BlankLayout from '@/layouts/BlankLayout.vue'
@@ -8,6 +8,7 @@ import { api } from '@/api/client'
 import { useSessionStore } from '@/stores/session'
 
 const router = useRouter()
+const route = useRoute()
 const session = useSessionStore()
 const message = useMessage()
 
@@ -33,7 +34,16 @@ onMounted(async () => {
     // 已经创建过账号
     allowed.value = false
     setTimeout(() => router.replace('/login'), 1500)
+    return
   }
+  // 老版失败回填：后端 SSR 分支 redirect 带 ?u=&d=&s=（JSON 分支下前端字段本就不会丢，
+  // 这里兜底 SSR 分支 —— 浏览器跟随 redirect 重新加载页面后回填）
+  const u = route.query.u as string
+  const d = route.query.d as string
+  const s = route.query.s as string
+  if (u) username.value = u
+  if (d) displayName.value = d
+  if (s) siteName.value = s
 })
 
 function getCsrf(): string {
@@ -67,21 +77,32 @@ async function onSubmit() {
     const res = await api.post('/setup', body, {
       baseURL: '/',
       maxRedirects: 0,
-      validateStatus: (s) => s >= 200 && s < 400,
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      // 后端 JSON 分支失败时返 400/409/500，也要进成功路径由下面的 ok 字段统一处理
+      validateStatus: (s) => s >= 200 && s < 500,
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'application/json' },
     })
-    if (res.status === 302 || res.status === 200) {
-      message.success('初始化完成，正在进入...')
-      await session.refresh()
-      router.replace('/')
-    } else {
-      errorText.value = res.data?.error || '初始化失败'
+    // 后端 JSON 分支：{ ok: true } 或 { ok: false, error }
+    const j = res.data
+    if (j && typeof j.ok === 'boolean') {
+      if (!j.ok) {
+        errorText.value = j.error || '初始化失败'
+        return
+      }
+    } else if (res.status === 302) {
+      // SSR 兜底：hasUser 时后端 redirect /login
+      errorText.value = '系统已存在管理员账号，请直接登录。'
+      return
     }
+    // 校验会话真的建立（对齐 G2-A3：不能只看 HTTP 状态）
+    await session.refresh()
+    if (!session.isAuthed) {
+      errorText.value = '初始化异常，请尝试手动登录'
+      return
+    }
+    message.success('初始化完成，正在进入...')
+    router.replace('/')
   } catch (e: any) {
-    // 解析 HTML 中的错误信息（粗略）
-    const html = e?.response?.data
-    if (typeof html === 'string' && html.length < 500) errorText.value = html
-    else errorText.value = e?.message || '初始化失败'
+    errorText.value = e?.response?.data?.error || e?.message || '初始化失败'
   } finally {
     loading.value = false
   }
@@ -91,7 +112,8 @@ async function onSubmit() {
 <template>
   <BlankLayout title="初始化" width="480px">
     <div class="setup">
-      <NText depth="3" class="sub">创建你的第一个管理员账号</NText>
+      <h1 class="title">初始化你的账本</h1>
+      <NText depth="3" class="sub">这是第一次启动，请创建管理员账号</NText>
 
       <NAlert v-if="!allowed" type="info" :show-icon="true" class="alert">
         系统已存在管理员账号，正在跳转到登录页…
@@ -103,9 +125,9 @@ async function onSubmit() {
 
       <NForm class="form" @submit.prevent="onSubmit">
         <NFormItem label="站点名称">
-          <NInput v-model:value="siteName" placeholder="如：家账簿" size="large" />
+          <NInput v-model:value="siteName" placeholder="如：家账簿" size="large" :maxlength="20" />
         </NFormItem>
-        <NFormItem label="用户名">
+        <NFormItem label="管理员用户名">
           <NInput
             v-model:value="username"
             placeholder="3-32 位字母 / 数字 / _"
@@ -114,14 +136,14 @@ async function onSubmit() {
             @keydown.enter="onSubmit"
           />
         </NFormItem>
-        <NFormItem label="显示名称">
+        <NFormItem label="昵称">
           <NInput
             v-model:value="displayName"
-            placeholder="如：张三"
+            placeholder="例如：老王"
             size="large"
           />
         </NFormItem>
-        <NFormItem label="密码">
+        <NFormItem label="管理员密码">
           <NInput
             v-model:value="password"
             type="password"
@@ -131,6 +153,7 @@ async function onSubmit() {
             :input-props="{ autocomplete: 'new-password' }"
             @keydown.enter="onSubmit"
           />
+          <NText depth="3" class="help">至少 8 位，建议同时包含字母与数字</NText>
         </NFormItem>
         <NFormItem label="确认密码">
           <NInput
@@ -160,7 +183,9 @@ async function onSubmit() {
 
 <style scoped>
 .setup { width: 100%; }
-.sub { font-size: 13px; display: block; margin-bottom: 4px; }
+.title { font-size: 18px; font-weight: 600; margin: 0 0 6px; }
+.sub { font-size: 13px; display: block; margin-bottom: 16px; }
 .alert { margin: 12px 0; }
 .form { margin-top: 16px; }
+.help { font-size: 12px; margin-top: 4px; display: block; width: 100%; }
 </style>

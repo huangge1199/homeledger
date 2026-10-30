@@ -1088,6 +1088,33 @@ B1 第二轮修复（用户截图反馈后）：
 
 **验证**：`npm run build`（`vue-tsc --noEmit && vite build`）**0 错误、exit 0**；后端 `node --check` 全部通过。**未启动/停止任何服务实例**（按约定由用户手动控制）。**注意**：后端 `server.js` / `src/routes/auth.js` / `src/routes/apiV1.js` 有改动，**需重启 5111 生效**。
 
+#### G3 初始化页修复（2026-10-30）
+
+以老版 `d:\project\homeledger-old\src\views\setup.ejs`（32 行）+ `routes/auth.js` 的 setup 段（160-192 行）为行为基准，逐项比对新版 `web/src/views/SetupView.vue`。
+
+后端校验与创建流程两版一致（用户名正则 / 密码 8 位 / 两次一致 → 建用户 + 默认账本 + site.name + 审计 + session regenerate），**问题集中在错误回传与文案** —— 与 G2 同源（`/setup` 当时不在 G2 范围内，本次补齐）。
+
+**致命 / 隐性缺陷（3 项，均与 G2 同源）**
+
+| # | 缺陷 | 改法 | 影响文件 |
+|---|---|---|---|
+| 1 | **错误提示显示为 HTML 片段** —— 后端 `fail()` 是 `res.redirect(400, '/setup?...')` + flash；前端 `validateStatus` 只放行 < 400 → 400 进 catch；Express redirect 的响应体是一段 `Moved Temporarily. Redirecting to...` HTML（< 500 字符），正好命中前端「解析 HTML 错误信息（粗略）」的逻辑 → 错误提示直接显示 HTML 原文。且 flash 是 SSR 机制，SPA 读不到「用户名需 3–32 位…」等准确文案 | 后端 `POST /setup` 加与 `/login` 同款 JSON 分支（`wantsJson` → 400 校验失败 `{ok:false,error}` / 409 已初始化 / 500 会话失败 / 200 成功 `{ok:true}`）；前端加 `Accept: application/json` 头、`validateStatus` 放行到 < 500、按 `j.ok` 字段统一处理，catch 读 `e.response.data.error` | `routes/auth.js`、`SetupView.vue` |
+| 2 | **失败后表单全部清空** —— 后端 redirect 已带 `?u=&d=&s=` 三个回填参数，但前端没读（同 G2-B3） | `onMounted` 读 `route.query` 的 u/d/s 回填用户名/昵称/站点名（JSON 分支下前端字段本就不会丢，此处兜底 SSR 分支） | `SetupView.vue` |
+| 3 | **hasUser 时误判成功** —— 已初始化后 POST `/setup`，后端 `res.redirect('/login')`，前端 `res.status === 302` 判定成功 → 弹「初始化完成」→ 跳 `/` 被路由守卫踢回登录页 | 成功路径统一先 `await session.refresh()` 再判断 `session.isAuthed`（对齐 G2-A3）；SSR 兜底分支识别 302 时提示「系统已存在管理员账号，请直接登录。」 | `SetupView.vue` |
+
+**功能 / 文案差异（4 项）**
+
+| # | 项 | 老版 | 改法 |
+|---|---|---|---|
+| 4 | 标题/副标题 | H1「初始化你的账本」+「这是第一次启动，请创建管理员账号」 | 补回（新版原先只有副标题「创建你的第一个管理员账号」） |
+| 5 | 字段标签 | 「站点名称 / **管理员用户名** / **昵称** / **管理员密码** / 确认密码」 | 全部对齐老版 |
+| 6 | 密码帮助文案 | 框下方 help「至少 8 位，建议同时包含字母与数字」 | 补回（新版原先仅 placeholder「至少 8 位」） |
+| 7 | 细节 | 站点名称 `maxlength="20"`；昵称 placeholder「例如：老王」 | 补 `:maxlength="20"`；placeholder 对齐 |
+
+**有意偏离老版（保留新版）**：「系统已存在管理员账号，正在跳转到登录页…」提示 + 1.5 秒延迟跳转（新版增强，老版 GET /setup 直接 redirect 无提示；G2 已修好 `needsSetup` 赋值时机，此逻辑已生效）、NForm 控件与密码明文切换、前端预校验（老版纯靠后端，新版双保险）、BlankLayout 品牌头（G1 已统一）。
+
+**验证**：`npm run build`（`vue-tsc --noEmit && vite build`）**0 错误、exit 0**；后端 `node --check` 通过。**未启动/停止任何服务实例**（按约定由用户手动控制）。**注意**：后端 `src/routes/auth.js` 有改动，**需重启 5111 生效**。
+
 ---
 
 ### G 组｜裸页（无侧栏）
@@ -1096,7 +1123,7 @@ B1 第二轮修复（用户截图反馈后）：
 |---|---|---|---|---|---|
 | G1 | 裸布局 | `layout-blank.ejs` | `BlankLayout.vue` | 待确认 | 见下方修复清单（4 致命/隐性 + 1 功能缺失）；**有意偏离：保留新版卡片宽度（420/480px，老版 400px）+ 无 manifest** |
 | G2 | 登录 | `login.ejs` | `LoginView.vue` | 待确认 | 见下方修复清单（4 致命/隐性 + 3 功能缺失）；**有意偏离：保留新版 NForm 控件 + 未初始化提示 + 「记住我」选项** |
-| G3 | 初始化 | `setup.ejs` | `SetupView.vue` | 待修 | |
+| G3 | 初始化 | `setup.ejs` | `SetupView.vue` | 待确认 | 见下方修复清单（3 致命/隐性 + 4 文案差异）；**有意偏离：保留新版已初始化提示 + 前端预校验 + 密码明文切换** |
 | G4 | 注册 | `register.ejs` | `RegisterView.vue` | 待修 | |
 | G5 | 加入账本 | `join.ejs` | `JoinView.vue` | 待修 | |
 | G6 | 404 | `error.ejs` | `NotFoundView.vue` | 待修 | |
@@ -1118,7 +1145,7 @@ B1 第二轮修复（用户截图反馈后）：
 | P3 | G1~G7 | 裸页，改动相对独立 |
 
 > A3（全局 CSRF）已随 C2 一并处理并实测通过 ✅ 已确认。
-> **P0/P1 及 P2 的 D2~D7、E1~E4 已全部完成并确认**。F 组已修 **F4（已确认）、F1（待确认）、F2（待确认）、F3（待确认）、F5（待确认）**；**F 组已全部修复完毕**。G 组已修 **G1（待确认）、G2（待确认）**；下一项按顺序为 **G3 初始化**（G4~G6 随后）。
+> **P0/P1 及 P2 的 D2~D7、E1~E4 已全部完成并确认**。F 组已修 **F4（已确认）、F1（待确认）、F2（待确认）、F3（待确认）、F5（待确认）**；**F 组已全部修复完毕**。G 组已修 **G1（待确认）、G2（待确认）、G3（待确认）**；下一项按顺序为 **G4 注册**（G5~G7 随后）。
 
 ---
 
@@ -1162,3 +1189,4 @@ B1 第二轮修复（用户截图反馈后）：
 | 2026-10-30 | F5 | 关于页按老版 `about.ejs`（114 行）+ `routes/about.js`（73 行）逐项对齐 `AboutView.vue`（用户决策：全量 13 项）。**根因**：`src/routes/about.js` 注释写着「数据由 `/api/v1/about` 拉取」，但 `apiV1.js` **根本没挂 about 路由** —— 后端 `src/lib/about.js` 备好的 `APP/FEATURES/CHANGELOG/TECH/UPSTREAM/issuesUrl` 全部**没有出口**（`routes/about.js` 里 `const about = require('../lib/about')` 引入了却从未使用，是死代码），新版 `AboutView.vue` 靠复用 `/admin/settings` 硬凑，老版 7 个板块丢了 6 个。**4 个致命/隐性缺陷**：① **非管理员统计全为 0** —— AboutView 取 `data.admin.stats`，而后端 `admin` 块**仅 isAdmin 时下发** → 普通成员访问「关于」时用户数/账本数/交易数/附件数全是 0；② **`/api/v1/about` 端点不存在** —— 新增 `src/routes/api.v1.about.js`（对齐老版统计口径与 `fmtSize` 格式化），在 `apiV1.js` 挂 `router.use('/about', ...)`，`stats` **不做 isAdmin 门控**（与老版一致），「用户数」属全局管理信息，单独走 `users` 字段且**仅管理员可见**；③ **「立即执行定时任务」无权限门控** —— 后端 `POST /admin/run-scheduler` 要求 `requireAdmin`，但 AboutView 对所有登录用户渲染此按钮 → 非管理员点击必 403，且用原生 `confirm`/`alert`（与全站 NPopconfirm + useFlash 风格不一致），已加 `v-if="session.user?.isAdmin"` 并改用 `NPopconfirm` + `useFlash`；④ **磁盘进度条是假进度** —— 原 `:percentage="Math.min(100, totalDb / 10)"` → **10 KB 就满格**，改为「数据库 / 附件各占总容量百分比」的真实占比。**7 项功能补齐**：⑤「✨ 功能亮点」6 项卡；⑥「💡 提功能需求 / 报 Bug」区块（`issuesUrl` 为空时按钮禁用 + 「仓库地址暂未配置：在后端 src/lib/about.js 的 GITHUB_REPO 中填入」提示）；⑦「🕘 版本日志」26 个版本（`NCollapse` + `NCollapseItem`，默认全收起，对齐老版 `<details>`，header 带版本号/日期/tag/条目数）；⑧「🧱 技术栈」chips（**顺带修正文案**：`EJS SSR → Vue 3 SPA`，v2 已退役 EJS）；⑨「🔒 数据与隐私声明」；⑩ 维护者署名 / 原项目链接 / AI 辅助声明；⑪ 品牌头补 `app.slogan` / `app.description` / changelog 的 tag chips，版本号改用接口返回的 package.json 版本。**2 项表现差异**：⑫ 统计口径回老版 4 项（记录笔数 / 账本数 / **陪伴天数** / 数据体积，附件数与用户数挪到「数据体积」卡补充说明）；⑬ 运行时长改「X 小时 Y 分钟」（原版直接显示秒数，不可读）。**有意偏离**：保留新版客户端环境卡、维护操作卡、致谢卡、后端环境 PID/内存，老版「技术栈 + 运行环境」并排用 `.two-col` 栅格实现（移动端单列）。`npm run build` 0 错误、`node --check` 通过。**注意**：后端 `api.v1.about.js`（新建）/ `apiV1.js` / `routes/about.js` / `lib/about.js` 有改动，**需重启 5111 生效**。**待确认** |
 | 2026-10-30 | G1 | 裸布局按老版 `layout-blank.ejs`（31 行）+ `app.css` 的 `.auth-wrap / .auth-card / .auth-brand` 逐项对齐 `BlankLayout.vue`（用户决策：全量 5 项）。**结构差异**：老版 layout-blank 是 **login / register / setup / join 四个页面共用的骨架**，提供 5 件事（HTML head、径向渐变背景、**白卡容器**、**品牌头**、flash 提示位），新版 `BlankLayout` 原先只保留「渐变背景 + slot」，卡片与品牌头散落到 4 个视图里各画各的。**4 个致命/隐性缺陷**：① **favicon 永远 404** —— `index.html` 引用 `/static/icon.svg`，但 **`web/public/` 与根 `public/` 目录都不存在**（`server.js` 的 `/static` 指向 `<root>/public`）→ 每次访问都产生一个 404 请求，已改为与老版同款内联 data-uri SVG（📒）；② **卡片容器缺失** —— 老版 layout 统一提供 `.auth-card`（白底 + 边框 + 圆角 **20px** + 内距 `32px 30px` + `shadow-lg`），新版由 4 个视图各自实现 → 宽度 420/480px 不一、圆角统一 12px、无阴影、无统一内距，RegisterView / JoinView 更是纯 `div` 无卡片质感，已在 `BlankLayout.vue` 新增 `.auth-card`（**保留新版宽度**，由 `width` prop 控制），并删掉 4 个视图的自绘外壳；③ **品牌头缺失** —— 老版统一提供 `.auth-brand`（📒 42px 圆角 13px 图标 + `siteName` + 副标题「自托管 · 全类型记账 · AI 截图自动记账」），新版 LoginView 自绘（📒+siteName）、SetupView 自绘（📒+「家账簿 · 初始化」）、RegisterView / JoinView **完全没有** → 已在 `BlankLayout.vue` 新增 `.auth-brand`，4 个视图统一复用，删除 LoginView / SetupView 的自绘 `.brand`；④ **页面标题不含站点名** —— 老版 `<title><%= title ? title + ' · ' + siteName : siteName %></title>`，新版 `router/index.ts` 硬编码 `· 家账簿` → 站点改名后**所有**页面标题不跟随，已改读 `useSessionStore().siteName`，并在 `App.vue` 加 `watch(() => session.siteName)`（改名后无需刷新即更新标题）。**1 项功能缺失**：⑤ **`<meta name="csrf">`** —— 老版 layout.ejs 与 layout-blank.ejs 都有，新版 index.html 没有 → `SetupView.vue` 的 `getCsrf()` 里 `document.querySelector('meta[name="csrf"]')` 这条 fallback **永远取不到值**（实际靠 `session.csrf` 兜住，功能没断但属死代码 + 潜在隐患），已在 index.html 补该 meta 并在 `session.ts` 的 `refresh()` 拿到 `d.csrf` 后回填。**有意偏离**：保留新版卡片宽度（登录 420 / 初始化 480，老版 400）+ 无 manifest（v2 已按 2.0.0 日志明确删除）+ 统一 theme-color `#3d6df5`。**G2~G5 的页面内容本次不动**（登录/注册/加入/404 表单属各自页面范围）。`npm run build` 0 错误，构建产物 `web/dist/index.html` 已确认含内联 favicon 与 csrf meta。**G1 纯前端改动，无需重启后端**。**待确认** |
 | 2026-10-30 | G2 | 登录页按老版 `login.ejs`（30 行）+ `routes/auth.js`（登录段 19-59 行）逐项对齐 `LoginView.vue`（用户决策：全量 7 项）。老版两版登录核心逻辑一致（`safeNext` 防开放重定向、失败次数限制、session regenerate、审计日志、锁定提示），新版只是把 `render('login', { error })` 换成 `flash + redirect` → **差异集中在错误回传与前端交互**。**4 个致命/隐性缺陷**：① **登录失败提示完全丢失** —— 新版后端 `res.redirect(401, '/login?...')` + `res.flash('error', ...)`，但 **flash 是 SSR 机制，SPA 前端不读**（`useFlash` 是纯前端队列，不拉服务端 flash）→ 前端只在 `catch` 里拼固定文案，用户看不到「尝试次数过多，请在 N 分钟后重试。」等准确文案。已在后端 `POST /login` 增加 JSON 分支（`Accept: application/json` 时直接返 `{ ok:false, error }`，覆盖 401 密码错 / 429 锁定 / 500 会话失败），前端 `api/auth.ts` 的 `login()` 解析 JSON 分支并保留 SSR 分支兜底；② **「记住我」是假开关** —— 新版有 `NCheckbox remember` 但 `login()` **根本没传 remember**，后端也无对应逻辑 → 勾了完全没作用（cookie 固定 30 天）。已改为前端传 `remember=1/0`，后端登录成功后按值设置 `req.session.cookie.maxAge` / `originalMaxAge`（勾选=持久 cookie 30 天，与老版一致；不勾=会话 cookie，浏览器关闭即失效）；③ **登录后不校验是否真的登录成功** —— 原先 `r.ok` 为 true 就 `router.replace(next)`，若后端 302 回 /login 会误判成功。已改为登录后 `await session.refresh()` 再判断 `session.isAuthed`，未登录则提示「登录失败，请重试」；④ **注册入口永远不显示** —— 新版用 `csrfFetch('/api/v1/admin/settings')` 探测 `site.allow_register`，但该端点是 `auth.requireLogin` → **未登录必然 401**，`allowRegister` 永远是 `false`。已改由 `/api/v1/session`（未登录可访问）下发 `allowRegister`，`session` store 增加该状态，登录页不再单独探测 `/admin/settings`。**3 项功能缺失**：⑤ 补「欢迎回来」标题 + 「请使用你的账号密码登录」副标题；⑥ 补底部「还没有账号？注册一个」链接（老版无条件显示，点击后由后端 `GET /register` 判断是否开放注册，新版在前端做同样判断并提示「本站未开放自助注册，请联系管理员邀请你加入账本。」，避免跳到占位页）；⑦ 失败后回填用户名（前端读 `route.query.u`）。**连带修复 2 项跨组隐性缺陷**：⑧ **`res.locals.siteName` / `baseCurrency` / `aiUsable` 从未被赋值** —— 新版 `server.js` 的全局上下文中间件只留了一句「SPA 时代：不再注入 res.locals」，但 `/api/v1/session` 仍在读这三个值 → 前端 `siteName` 永远回落默认值「家账簿」，**站点改名后侧栏 / 页面标题 / 登录页品牌名全都不跟随**（G1 修的「标题跟随 siteName」因此实际失效），`aiUsable` 永远 false → AI 面板一直显示「未配置模型」。已对齐老版 `server.js:123-128` 补赋值；⑨ **`res.locals.needsSetup` 赋值时机太晚** —— 原设在 `/api/v1` 挂载**之后**的中间件里 → `/api/v1/session` 读到 `undefined` → 登录页「还没创建管理员账号，前往初始化」提示永远不显示，已提前到 `/api/v1` 挂载之前。**有意偏离**：保留新版 NForm 控件、autocomplete、next 透传、Enter 提交、密码明文切换、未初始化提示、「记住我」选项。**G3~G6 的页面内容本次不动**。`npm run build` 0 错误、`node --check` 通过。**注意**：后端 `server.js` / `src/routes/auth.js` / `src/routes/apiV1.js` 有改动，**需重启 5111 生效**。**待确认** |
+| 2026-10-30 | G3 | 初始化页按老版 `setup.ejs`（32 行）+ `routes/auth.js` setup 段逐项对齐 `SetupView.vue`（用户决策：全量 7 项）。后端校验与创建流程两版一致（用户名正则 / 密码 8 位 / 两次一致 → 建用户 + 默认账本 + site.name + 审计 + session regenerate），**问题集中在错误回传与文案** —— 与 G2 同源（`/setup` 当时不在 G2 范围内，本次补齐）。**3 个致命/隐性缺陷**：① **错误提示显示为 HTML 片段** —— 后端 `fail()` 是 `res.redirect(400, '/setup?...')` + flash；前端 `validateStatus` 只放行 < 400 → 400 进 catch；Express redirect 的响应体是一段 `Moved Temporarily. Redirecting to...` HTML（< 500 字符），正好命中前端「解析 HTML 错误信息（粗略）」的逻辑 → 错误提示直接显示 HTML 原文，且 SPA 读不到 flash 里的准确文案（「用户名需 3–32 位…」等）。已在后端 `POST /setup` 加与 `/login` 同款 JSON 分支（`wantsJson` → 400 校验失败 `{ok:false,error}` / 409 已初始化 / 500 会话失败 / 200 成功 `{ok:true}`），前端加 `Accept: application/json` 头、`validateStatus` 放行到 < 500、按 `j.ok` 字段统一处理，catch 读 `e.response.data.error`；② **失败后表单全部清空** —— 后端 redirect 已带 `?u=&d=&s=` 三个回填参数但前端没读（同 G2-B3），已在 `onMounted` 读 `route.query` 的 u/d/s 回填用户名/昵称/站点名（JSON 分支下前端字段本就不会丢，此处兜底 SSR 分支）；③ **hasUser 时误判成功** —— 已初始化后 POST `/setup`，后端 `res.redirect('/login')`，前端 `res.status === 302` 判定成功 → 弹「初始化完成」→ 跳 `/` 被路由守卫踢回登录页。已改为成功路径统一先 `await session.refresh()` 再判断 `session.isAuthed`（对齐 G2-A3），SSR 兜底分支识别 302 时提示「系统已存在管理员账号，请直接登录。」。**4 项文案差异**：④ 补 H1「初始化你的账本」+ 副标题「这是第一次启动，请创建管理员账号」（原只有「创建你的第一个管理员账号」）；⑤ 字段标签对齐老版（「管理员用户名 / 昵称 / 管理员密码」，原为「用户名 / 显示名称 / 密码」）；⑥ 补密码框下方 help「至少 8 位，建议同时包含字母与数字」；⑦ 站点名称补 `:maxlength="20"`、昵称 placeholder 对齐「例如：老王」。**有意偏离**：保留新版已初始化提示 + 1.5 秒延迟跳转（新版增强，G2 已修好 `needsSetup` 赋值时机）、NForm 控件与密码明文切换、前端预校验（老版纯靠后端，新版双保险）、BlankLayout 品牌头（G1 已统一）。`npm run build` 0 错误、`node --check` 通过。**注意**：后端 `src/routes/auth.js` 有改动，**需重启 5111 生效**。**待确认** |

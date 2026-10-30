@@ -159,13 +159,20 @@ router.get('/setup', (req, res, next) => {
 
 router.post('/setup', (req, res) => {
   const hasUser = Number(get('SELECT COUNT(*) AS c FROM users')?.c || 0) > 0;
-  if (hasUser) return res.redirect('/login');
+  // 与 /login 同款：SPA 端（Accept: application/json）直接返 JSON，不走 flash + redirect。
+  // 否则前端拿到的是 redirect 的 HTML 片段，错误提示会显示成原文甚至误判成功。
+  const wantsJson = (req.headers.accept || '').includes('application/json');
+  if (hasUser) {
+    if (wantsJson) return res.status(409).json({ ok: false, error: '系统已存在管理员账号，请直接登录。' });
+    return res.redirect('/login');
+  }
   const username = String(req.body.username || '').trim();
   const displayName = String(req.body.display_name || '').trim() || username;
   const password = String(req.body.password || '');
   const password2 = String(req.body.password2 || '');
   const siteName = String(req.body.site_name || '').trim();
   const fail = (error) => {
+    if (wantsJson) return res.status(400).json({ ok: false, error });
     res.flash('error', error);
     const qs = new URLSearchParams({ u: username, d: displayName, s: siteName }).toString();
     return res.redirect(400, `/setup?${qs}`);
@@ -183,11 +190,17 @@ router.post('/setup', (req, res) => {
   if (siteName) require('../db').setSetting('site.name', siteName.slice(0, 20));
   auth.audit(req, 'setup.done', { entity: 'user', entityId: info.lastInsertRowid });
   req.session.regenerate((err) => {
-    if (err) return res.redirect('/login');
+    if (err) {
+      if (wantsJson) return res.status(500).json({ ok: false, error: '初始化失败：' + (err?.message || '会话初始化失败') });
+      return res.redirect('/login');
+    }
     req.session.userId = info.lastInsertRowid;
     req.session.ledgerId = ledgerId;
     req.session.csrf = util.uid(40);
-    req.session.save(() => res.redirect('/'));
+    req.session.save(() => {
+      if (wantsJson) return res.json({ ok: true });
+      res.redirect('/');
+    });
   });
 });
 
