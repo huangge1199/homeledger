@@ -54,31 +54,43 @@ export async function login(username: string, password: string, next = '/', reme
 
 /**
  * 注册（仅在 allow_register=true 时可用）
+ *
+ * 后端在 Accept: application/json 时直接返回 { ok: true } 或 { ok: false, error }；
+ * 否则退回 SSR 行为（302 重定向 + flash）。两种都兼容。
  */
 export async function register(payload: {
   username: string
   password: string
   display_name: string
   email?: string
-  invite_code?: string
 }): Promise<LoginResult> {
   const body = new URLSearchParams()
   body.set('username', payload.username)
   body.set('password', payload.password)
   body.set('display_name', payload.display_name)
   if (payload.email) body.set('email', payload.email)
-  if (payload.invite_code) body.set('invite_code', payload.invite_code)
   body.set('_csrf', getCsrf())
   try {
-    await api.post('/register', body, {
+    const res = await api.post('/register', body, {
       baseURL: '/',
       maxRedirects: 0,
-      validateStatus: (s) => s >= 200 && s < 400,
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      // 后端 JSON 分支失败时返 400/403/500，也要进成功路径由下面的 ok 字段统一处理
+      validateStatus: (s) => s >= 200 && s < 500,
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'application/json' },
     })
+    // 后端 JSON 分支
+    const j = res.data
+    if (j && typeof j.ok === 'boolean') {
+      return j.ok ? { ok: true } : { ok: false, error: j.error || '注册失败' }
+    }
+    // 兜底：SSR 重定向分支
+    if (res.status === 403) {
+      return { ok: false, error: '本站未开放自助注册，请联系管理员邀请你加入账本。' }
+    }
     return { ok: true }
   } catch (e: any) {
-    return { ok: false, error: e?.response?.data?.error || e?.message || '注册失败' }
+    const msg = e?.response?.data?.error || e?.message || '注册失败'
+    return { ok: false, error: msg }
   }
 }
 

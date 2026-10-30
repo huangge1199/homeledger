@@ -111,7 +111,10 @@ router.get('/register', (req, res, next) => {
 });
 
 router.post('/register', (req, res) => {
+  // 与 /login、/setup 同款：SPA 端（Accept: application/json）直接返 JSON，不走 flash + redirect
+  const wantsJson = (req.headers.accept || '').includes('application/json');
   if (String(getSetting('site.allow_register', 'false')) !== 'true') {
+    if (wantsJson) return res.status(403).json({ ok: false, error: '本站未开放自助注册，请联系管理员邀请你加入账本。' });
     res.flash('error', '本站未开放自助注册。');
     return res.redirect(403, '/login');
   }
@@ -121,6 +124,7 @@ router.post('/register', (req, res) => {
   const password2 = String(req.body.password2 || '');
   const email = String(req.body.email || '').trim() || null;
   const fail = (error) => {
+    if (wantsJson) return res.status(400).json({ ok: false, error });
     res.flash('error', error);
     const qs = new URLSearchParams({
       u: username, d: displayName, e: email || '',
@@ -140,12 +144,18 @@ router.post('/register', (req, res) => {
   const ledgerId = require('../db').createDefaultLedger(info.lastInsertRowid, displayName);
   auth.audit(req, 'user.register', { entity: 'user', entityId: info.lastInsertRowid, detail: username });
   req.session.regenerate((err) => {
-    if (err) return res.redirect('/login');
+    if (err) {
+      if (wantsJson) return res.status(500).json({ ok: false, error: '注册失败：' + (err?.message || '会话初始化失败') });
+      return res.redirect('/login');
+    }
     req.session.userId = info.lastInsertRowid;
     req.session.ledgerId = ledgerId;
     req.session.csrf = util.uid(40);
     req.session.flash = { type: 'success', message: '注册成功，已为你创建默认账本与账户。' };
-    req.session.save(() => res.redirect('/'));
+    req.session.save(() => {
+      if (wantsJson) return res.json({ ok: true });
+      res.redirect('/');
+    });
   });
 });
 
