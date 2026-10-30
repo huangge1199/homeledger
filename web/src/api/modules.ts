@@ -166,6 +166,11 @@ export const AiApi = {
   removeAttachment: (id: number) => api.delete(`/ai/attachments/${id}`).then((r) => r.data.data),
 }
 
+// --- About: 产品介绍 / 功能亮点 / 版本日志 / 技术栈 / 运行环境 ---
+export const AboutApi = {
+  about: () => api.get('/about').then((r) => r.data.data),
+}
+
 // --- Admin: settings, ledgers, members, import, backup ---
 export const AdminApi = {
   settings: () => api.get('/admin/settings').then((r) => r.data.data),

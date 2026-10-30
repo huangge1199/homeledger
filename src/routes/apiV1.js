@@ -55,6 +55,7 @@ router.use('/dashboard',     require('./api.v1.dashboard'));
 router.use('/reports',       require('./api.v1.reports'));
 router.use('/admin',         require('./api.v1.admin'));
 router.use('/ai',            require('./api.v1.ai'));
+router.use('/about',         require('./api.v1.about'));
 
 // 404 兜底
 router.use((req, res) => api.notFound(res, `API 端点不存在：${req.method} ${req.originalUrl}`));

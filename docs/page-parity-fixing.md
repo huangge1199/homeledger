@@ -807,7 +807,7 @@ B1 第二轮修复（用户截图反馈后）：
 | F2 | 成员权限 | `members.ejs` | `MembersView.vue` | 待确认 | 见下方修复清单（2 致命 + 4 隐性 + 9 功能缺失）；**有意偏离：保留新版 NDataTable 表格 + 抽屉表单（老版为卡片行内编辑）** |
 | F3 | 通知中心 | `notifications.ejs` | `NotificationsView.vue` | 待确认 | 见下方修复清单（4 致命/隐性 + 4 表现差异）；**有意偏离：保留新版筛选卡 + kind 标签 + 整行可点（老版为纯列表 + 「查看」按钮）** |
 | F4 | 设置 | `settings.ejs`（25KB，最大） | `SettingsView.vue` | 已确认 | 见下方修复清单（回归老版 6 个 tab + 4 个隐性缺陷 + 3 个运行时缺陷）；**修复后即可在设置页配好 AI，B6/B7 的完整验证前提已具备** |
-| F5 | 关于 | `about.ejs` | `AboutView.vue` | 待修 | |
+| F5 | 关于 | `about.ejs` | `AboutView.vue` | 待确认 | 见下方修复清单（4 致命/隐性 + 7 功能缺失 + 2 表现差异）；**有意偏离：保留新版客户端环境卡 + 维护操作卡 + 致谢卡** |
 
 #### F1 账本管理修复（2026-10-29）
 
@@ -983,6 +983,44 @@ B1 第二轮修复（用户截图反馈后）：
 - 「导出备份」页新增「💾 数据库文件备份」（下载 .db）+「♻️ 从备份恢复」（高风险警告 + 选文件），均仅管理员可见
 - 控制台：0 应用级报错（仅 Electron 插件自身的 `MaxListenersExceededWarning` 与导航 `ERR_ABORTED`，与页面无关）
 
+#### F5 关于修复（2026-10-30）
+
+以老版 `d:\project\homeledger-old\src\views\about.ejs`（114 行）+ `d:\project\homeledger-old\src\routes\about.js`（73 行）为行为基准，逐项比对新版 `web/src/views/AboutView.vue`。
+
+**根因**：新版 `src/routes/about.js` 注释写着「数据由 `/api/v1/about` 拉取」，但 `src/routes/apiV1.js` **根本没挂 about 路由** —— 后端 `src/lib/about.js` 里备好的 `APP/FEATURES/CHANGELOG/TECH/UPSTREAM/issuesUrl` 全部**没有出口**，`routes/about.js` 里 `const about = require('../lib/about')` 引入了却从未使用（死代码）。新版 `AboutView.vue` 是靠复用 `/admin/settings` 接口硬凑出来的，导致老版 7 个板块丢了 6 个。
+
+**致命 / 隐性缺陷（4 项）**
+
+| # | 缺陷 | 老版 | 改法 | 影响文件 |
+|---|---|---|---|---|
+| 1 | **非管理员统计全为 0** | about 路由只要求登录，任何成员都能看到统计 | 新版 AboutView 取 `data.admin.stats`，而后端 `admin` 块**仅 isAdmin 时下发** → 普通成员访问「关于」时用户数/账本数/交易数/附件数全是 0 | 新增 `api.v1.about.js`，`stats` **不做 isAdmin 门控**（与老版一致）；「用户数」是全局管理信息，单独走 `users` 字段且**仅管理员可见** |
+| 2 | **`/api/v1/about` 端点不存在** | 后端直出 `APP/FEATURES/CHANGELOG/TECH/issuesUrl/stats/envInfo` | 新增 `src/routes/api.v1.about.js`（对齐老版 `routes/about.js` 的统计口径与 `fmtSize`），在 `apiV1.js` 挂 `router.use('/about', ...)`；同时清理 `routes/about.js` 的死 require | `api.v1.about.js`（新建）、`apiV1.js`、`routes/about.js` |
+| 3 | **「立即执行定时任务」无权限门控** | 老版该按钮在设置页 | 后端 `POST /admin/run-scheduler` 要求 `requireAdmin`，但 AboutView 对所有登录用户渲染此按钮 → 非管理员点击必 403；且用原生 `confirm`/`alert`，与全站 NPopconfirm + useFlash 风格不一致 | 按钮加 `v-if="session.user?.isAdmin"`；改用 `NPopconfirm` 确认 + `useFlash` 提示 |
+| 4 | **磁盘进度条是假进度** | 老版无进度条，直接给「数据体积」 | 原 `:percentage="Math.min(100, totalDb / 10)"` → **10 KB 就满格**。改为「数据库 / 附件各占总容量百分比」的真实占比，并补 GB·MB·KB·B 格式化 | `AboutView.vue`、`api.v1.about.js`（补 `dbSize`/`uploadsSize`） |
+
+**功能缺失（7 项，老版有、新版完全没有）**
+
+| # | 缺失内容 | 老版位置 | 改法 |
+|---|---|---|---|
+| 5 | **✨ 功能亮点 6 项**（AI 智能记账 / 订阅扣费 / 预算与目标 / 借贷台账 / 账单导入 / 开放 API） | about.ejs:22-35 | 新增「功能亮点」卡，`features` 渲染成 3 列网格 |
+| 6 | **💡 提功能需求 / 报 Bug** 区块（GitHub Issues 按钮 + 未配置时置灰提示 + 源仓库链接） | about.ejs:37-55 | 新增该卡；`issuesUrl` 为空时按钮禁用并提示「仓库地址暂未配置：在后端 src/lib/about.js 的 GITHUB_REPO 中填入仓库地址即可开启」 |
+| 7 | **🕘 版本日志**（26 个版本，可展开/收起 + 「N 项」计数） | about.ejs:57-80 | 新增「版本日志」卡，用 `NCollapse` + `NCollapseItem`（默认全部收起，与老版 `<details>` 行为一致），header 显示版本号 / 日期 / tag / 条目数 |
+| 8 | **🧱 技术栈**（Node.js ≥22 / SQLite / EJS SSR / 飞牛 fnOS） | about.ejs:83-93 | 新增「技术栈」卡，`tech` 渲染成 chips；**顺带修正文案**：`EJS SSR → Vue 3 SPA`（v2 已退役 EJS，沿用老版文案会误导） |
+| 9 | **🔒 数据与隐私声明**（数据仅存本机数据目录、不上传第三方、AI 仅管理员配置后调用） | about.ejs:90-92 | 补到技术栈卡底部（`NAlert type="info"`） |
+| 10 | **维护者署名 / 原项目链接 / AI 辅助声明** | about.ejs:109-112 | 补到「运行环境」卡底部 |
+| 11 | **品牌区信息**：`app.slogan`、`app.description`、CHANGELOG 的 tag chips（「当前版本」） | about.ejs:5-11 | 品牌头补 slogan / description；版本号改用接口返回的 `version`（package.json），并渲染 changelog 的 tag chips |
+
+**表现差异（2 项）**
+
+| # | 项 | 老版 | 改法 |
+|---|---|---|---|
+| 12 | **统计口径** | 记录笔数 / 账本数 / **陪伴天数** / 数据体积（DB+uploads 合计，GB·MB·KB·B 格式化） | 统计卡改回老版 4 项口径，新增「陪伴天数」（后端按首笔记账日算起）；附件数 / 用户数 / 合计体积挪到「数据体积」卡补充说明 |
+| 13 | **运行时长** | 「X 小时 Y 分钟」 | 新增 `fmtUptime()`，后端环境与运行环境两处统一显示「X 小时 Y 分钟」（原版直接显示秒数，不可读） |
+
+**有意偏离老版（保留新版）**：客户端环境卡（UA / 屏幕 / 语言 / 网络 / Cookie / localStorage）、后端环境卡的 PID 与内存、维护操作卡（清空本地缓存 / 刷新页面）、致谢卡 —— 均为超集，不动。老版「技术栈 + 运行环境」两卡并排，新版用 `.two-col` 栅格实现，移动端单列。
+
+**验证**：`npm run build`（`vue-tsc --noEmit && vite build`）**0 错误、exit 0**；后端 `node --check` 通过。**未启动/停止任何服务实例**（按约定由用户手动控制）。**注意**：后端 `api.v1.about.js` / `apiV1.js` / `routes/about.js` / `lib/about.js` 有改动，**需重启 5111 生效**。
+
 ---
 
 ### G 组｜裸页（无侧栏）
@@ -1013,7 +1051,7 @@ B1 第二轮修复（用户截图反馈后）：
 | P3 | G1~G7 | 裸页，改动相对独立 |
 
 > A3（全局 CSRF）已随 C2 一并处理并实测通过 ✅ 已确认。
-> **P0/P1 及 P2 的 D2~D7、E1~E4 已全部完成并确认**。F 组已修 **F4（已确认）、F1（待确认）、F2（待确认）、F3（待确认）**；下一项按顺序为 **F5 关于**。
+> **P0/P1 及 P2 的 D2~D7、E1~E4 已全部完成并确认**。F 组已修 **F4（已确认）、F1（待确认）、F2（待确认）、F3（待确认）、F5（待确认）**；**F 组已全部修复完毕**，下一项为 **G 组裸页（G1 裸布局）**。
 
 ---
 
@@ -1054,3 +1092,4 @@ B1 第二轮修复（用户截图反馈后）：
 | 2026-10-29 | E1 | 分类管理按老版 `categories.ejs` 补 `CategoriesView.vue`（后端 `api.v1.accounts.js` 分类段与老版一致，**无需改动**）。**3 项修复**（用户只勾选 E1-1/2/5）：① 顶部补提示卡「系统内置了 N 个一级分类、M 个二级分类…」，数量取真实数据（一级=支出+收入大类数、二级=`flat` 中有 `parent_id` 的条数）；② 一级分类标题右侧金额改为「合计 ¥X」，= 大类自身近一年统计 + 所有子类统计之和；③ 颜色保留 9 色预设下拉，末尾加「🎨 自定义」，选中后出现 hex 输入框 + 色块预览，提交时非合法 hex 回落 `#8c8c8c`；编辑时若原色不在预设自动显示「自定义」并回填。`npm run build` 0 错误。**已确认** |
 | 2026-10-29 | E2 | 标签管理按老版 `tags.ejs` 对齐 `TagsView.vue`，并修后端 `api.v1.accounts.js` 标签统计口径。**8 项修复**（用户全选，版式/新建入口/颜色均保留新版方案）：① 顶部补「标签是跨分类的横向维度…」提示卡；② 保留新版 3 张统计卡 + 网格版式，卡片头补「全部标签 · N 个」；③ 标签名改为 `RouterLink` 跳 `/search?tag_id=N`（老版跳 `/transactions`），点击即看该标签全部交易；④ 保留抽屉新建/编辑入口；⑤ 颜色沿用 E1 方案：预设下拉 + 「🎨 自定义」hex 输入兜底，非法值回落 `#4f7cff`，编辑非预设色自动回填；⑥ 空态改 🔖 + 老版文案（「在记账时直接填写标签名即可创建…」）；⑦ **编辑/删除按钮改为常显** —— 原 `opacity: 0` + hover 才出现，移动端完全点不到（与 D1 同类缺陷）；⑧ **后端 `cnt` 改为 JOIN transactions 并过滤 `deleted_at IS NULL`** —— 原 `COUNT(*) FROM transaction_tags` 把软删除交易也算进笔数，与 `total` 口径不一致。`npm run build` 0 错误、`node --check` 通过。**注意**：后端 `api.v1.accounts.js` 有改动，**需重启 5111 生效**。**已确认** |
 | 2026-10-30 | F3 | 通知中心按老版 `notifications.ejs`（40 行）逐项对齐 `NotificationsView.vue`（用户决策：保留新版结构，只补齐老版能力；修复范围=全量 8 项）。**后端核对**：`api.v1.dashboard.js` 的 `/notifications`（`SELECT n.*, l.name AS ledger_name ... ORDER BY n.is_read, n.id DESC LIMIT 200`）、`/notifications/read-all`、`/notifications/:id/read` 与老版 `routes/dashboard.js` **逐行一致**，**无后端改动**。**4 个致命/隐性缺陷**：① **未读徽标不同步** —— `markRead()`/`markAll()` 都没调 `session.setUnread()` → 标记已读后侧栏红点不消（文档 F3 行原本标注的遗留项），已按「减 1」推算同步（页面内 `unreadCount` 是最近 200 条内口径，侧栏徽标是全表口径，不能直接互相回填）；② **`kind='success'` 图标缺失** —— 老版 `success → 🎉`，新版 `kindMeta` 无此键 → 「储蓄目标达成」通知落到默认 `🔔`（后端确有 `kind:'success'`），已补 `success` 映射 + `.ico.tone-success` 配色；③ **通知跳转目标路由缺失** —— 订阅通知 `link` 是 `/subscriptions/{id}/edit`（`src/lib/subscriptions.js:323`），新版路由表只有 `/subscriptions` → 点该通知直接 404，已补 `/subscriptions/:id(\\d+)/edit` 路由并让 `SubscriptionsView.vue` 按 `route.params.id` 自动弹出编辑抽屉（抽屉关闭后地址栏还原 `/subscriptions`）；④ **正文裸露内部去重键** —— 调度器写的 `body` 末尾拼 `\|<dedupeKey>`，新版直接输出 → 用户看到 `已用 12.00 / 20.00（60%）\|budget:12:2026-10:over`，新增 `utils/format.ts` 的 `stripDedupeSuffix()` 按通用规则清掉全部 `\|<key>:<value>`（**超越老版**：老版只清 `budget/debt/goal` 三种，`recurring:*`/`sub-*` 仍裸露，老版自身也有此缺陷）。**4 项表现差异**：⑤ 时间改主显绝对时间 `2026-10-30 14:23`（新增 `utils/format.ts` 的 `fmtDateTime`），相对时间降级为悬浮 `title`，并顺带修原 `timeAgo()` 超 7 天分支用 `toISOString()`（UTC）导致凌晨少一天的缺陷；⑥ 移除裸露的 `→ /subscriptions/12/edit` 路径文本，改回老版「查看」按钮；⑦ 空态文案回老版「还没有通知 / 预算超支、账单到期、借贷到期时会在这里提醒你」；⑧ 「全部标为已读」改为常显、无未读时 `disabled`。**有意偏离**：保留筛选卡、kind 标签、未读行高亮、整行可点、刷新按钮。`npm run build` 0 错误。**F3 纯前端改动，无需重启后端**。**待确认** |
+| 2026-10-30 | F5 | 关于页按老版 `about.ejs`（114 行）+ `routes/about.js`（73 行）逐项对齐 `AboutView.vue`（用户决策：全量 13 项）。**根因**：`src/routes/about.js` 注释写着「数据由 `/api/v1/about` 拉取」，但 `apiV1.js` **根本没挂 about 路由** —— 后端 `src/lib/about.js` 备好的 `APP/FEATURES/CHANGELOG/TECH/UPSTREAM/issuesUrl` 全部**没有出口**（`routes/about.js` 里 `const about = require('../lib/about')` 引入了却从未使用，是死代码），新版 `AboutView.vue` 靠复用 `/admin/settings` 硬凑，老版 7 个板块丢了 6 个。**4 个致命/隐性缺陷**：① **非管理员统计全为 0** —— AboutView 取 `data.admin.stats`，而后端 `admin` 块**仅 isAdmin 时下发** → 普通成员访问「关于」时用户数/账本数/交易数/附件数全是 0；② **`/api/v1/about` 端点不存在** —— 新增 `src/routes/api.v1.about.js`（对齐老版统计口径与 `fmtSize` 格式化），在 `apiV1.js` 挂 `router.use('/about', ...)`，`stats` **不做 isAdmin 门控**（与老版一致），「用户数」属全局管理信息，单独走 `users` 字段且**仅管理员可见**；③ **「立即执行定时任务」无权限门控** —— 后端 `POST /admin/run-scheduler` 要求 `requireAdmin`，但 AboutView 对所有登录用户渲染此按钮 → 非管理员点击必 403，且用原生 `confirm`/`alert`（与全站 NPopconfirm + useFlash 风格不一致），已加 `v-if="session.user?.isAdmin"` 并改用 `NPopconfirm` + `useFlash`；④ **磁盘进度条是假进度** —— 原 `:percentage="Math.min(100, totalDb / 10)"` → **10 KB 就满格**，改为「数据库 / 附件各占总容量百分比」的真实占比。**7 项功能补齐**：⑤「✨ 功能亮点」6 项卡；⑥「💡 提功能需求 / 报 Bug」区块（`issuesUrl` 为空时按钮禁用 + 「仓库地址暂未配置：在后端 src/lib/about.js 的 GITHUB_REPO 中填入」提示）；⑦「🕘 版本日志」26 个版本（`NCollapse` + `NCollapseItem`，默认全收起，对齐老版 `<details>`，header 带版本号/日期/tag/条目数）；⑧「🧱 技术栈」chips（**顺带修正文案**：`EJS SSR → Vue 3 SPA`，v2 已退役 EJS）；⑨「🔒 数据与隐私声明」；⑩ 维护者署名 / 原项目链接 / AI 辅助声明；⑪ 品牌头补 `app.slogan` / `app.description` / changelog 的 tag chips，版本号改用接口返回的 package.json 版本。**2 项表现差异**：⑫ 统计口径回老版 4 项（记录笔数 / 账本数 / **陪伴天数** / 数据体积，附件数与用户数挪到「数据体积」卡补充说明）；⑬ 运行时长改「X 小时 Y 分钟」（原版直接显示秒数，不可读）。**有意偏离**：保留新版客户端环境卡、维护操作卡、致谢卡、后端环境 PID/内存，老版「技术栈 + 运行环境」并排用 `.two-col` 栅格实现（移动端单列）。`npm run build` 0 错误、`node --check` 通过。**注意**：后端 `api.v1.about.js`（新建）/ `apiV1.js` / `routes/about.js` / `lib/about.js` 有改动，**需重启 5111 生效**。**待确认** |

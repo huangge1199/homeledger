@@ -343,7 +343,7 @@ const CHANGELOG = [
 const TECH = [
   { name: 'Node.js ≥ 22', desc: '零原生依赖，纯 JS 单进程' },
   { name: 'SQLite', desc: 'node:sqlite 内置驱动，数据自持' },
-  { name: 'EJS SSR', desc: '服务端渲染，低带宽也流畅' },
+  { name: 'Vue 3 SPA', desc: 'Vue 3 + Naive UI 前端，服务端只出 JSON 接口' },
   { name: '飞牛 fnOS', desc: 'fpk 应用包，桌面内嵌运行' },
 ];
 
