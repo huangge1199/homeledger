@@ -1148,6 +1148,37 @@ B1 第二轮修复（用户截图反馈后）：
 
 **验证**：`npm run build`（`vue-tsc --noEmit && vite build`）**0 错误、exit 0**；后端 `node --check` 通过。**未启动/停止任何服务实例**（按约定由用户手动控制）。**注意**：后端 `src/routes/auth.js` 有改动，**需重启 5111 生效**。
 
+#### G5 加入账本修复（2026-10-30）
+
+以老版 `d:\project\homeledger-old\src\views\join.ejs`（15 行）+ 老版 `routes/auth.js` 的 resolveInvite / join 段为行为基准，比对新版 `JoinView.vue` + `api/auth.ts` 的 `joinLedger()` + 新版 `routes/auth.js` join 段。
+
+新版后端加入主链路本就完整（邀请校验 / 已是成员处理 / 回到原账本记忆 / owner 角色恢复 / 通知成员），但**全靠 flash + redirect**（SPA 无人消费）；前端则是占位页 + **前后端路由不匹配**。
+
+**致命 / 隐性缺陷（4 项）**
+
+| # | 缺陷 | 改法 | 影响文件 |
+|---|---|---|---|
+| 1 | **前后端路由不匹配 → 点邀请链接 404** —— 后端 redirect 到 `/join?code=xxx&ledger=…`（query 形式），前端只注册了 `/join/:token`（路径参数），`/join` 匹配不到路由；且 JoinView 读 `params.token`、后端传 `query.code`，来源对不上 | GET redirect 目标改为 `/join/{code}?ledger=…`（code 进路径段，对齐前端路由；query 只传 ledger/role/creator/expires） | `routes/auth.js` |
+| 2 | **JoinView 是占位页** —— 只显示邀请码 + 「确认加入表单待补」，无邀请信息、无确认按钮 | 整体重写：错误卡 / 已是成员提示 / 邀请信息卡 + 确认加入按钮 + 底部提示 | `JoinView.vue` |
+| 3 | **joinLedger() 是旧 SSR 模式** —— 无 Accept 头；错误时后端 404/410 redirect，前端拿 HTML 片段；成功（302 /）与「已是成员」（302 /）无法区分；且传 `display_name`/`password` 死参数（老版表单只有 _csrf，后端不读） | 对齐 login/register 模式：Accept 头 + `validateStatus < 500` + `j.ok` 统一处理；删死参数；返回 `alreadyMember`/`ledgerName`/`message` | `api/auth.ts` |
+| 4 | **服务端 flash 全丢**（G2 已确认 SPA 不读）—— 邀请无效/过期/已用/账本删除 → 静默回首页；「已是成员」→ 账本切了但没提示 | `resolveInvite` 加 JSON 分支（POST 时返 404/410 JSON；GET 时 redirect 回 `/join/{code}?error=…`）；GET「已是成员」redirect 回 join 页带 `?already=1`；POST 加 `wantsJson`（成功 / alreadyMember 返 JSON） | `routes/auth.js` |
+
+**功能 / 文案差异（7 项）**
+
+| # | 项 | 老版 | 改法 |
+|---|---|---|---|
+| 5 | 邀请信息卡 | 「你被邀请以 {角色} 身份加入账本「{账本}」」+「邀请由 {创建人} 创建 · 有效期至 {日期}」 | 按 query 展示（role 经 ROLE_LABEL 转中文） |
+| 6 | 「确认加入」按钮 | btn-block btn-lg，POST /join/:code | NButton block large，调 `joinLedger(code)` |
+| 7 | 底部提示 | 「不想加入？直接关闭本页即可，邀请不会被使用。」 | 三种状态（正常/已成员/错误）都显示 |
+| 8 | 成功提示 | 「已加入账本「X」，可随时在右上角切换账本」 | `message.success` 同文案 + `session.refresh()` 同步账本上下文 + 跳首页 |
+| 9 | 「已是成员」提示 | 「你已是账本「X」的成员」 | JSON `alreadyMember` → `message.info`；GET 场景 `?already=1` → 页内 NAlert |
+| 10 | 未登录拦截 | 老版 GET/POST 挂 requireLogin → 302 /login?next= | `onMounted` 校验 `session.isAuthed`，未登录跳 `/login?next=/join/xxx`（登录后回来继续） |
+| 11 | 错误展示 | 老版 join 页 error 分支显示 flash error | 页内 NAlert error 卡（`?error=` 回传 / 提交失败 / 缺邀请码三种来源） |
+
+**有意偏离老版（保留新版）**：BlankLayout 品牌头 + NButton；错误展示改为 redirect 回 join 页带 query 由前端展示错误卡（老版渲染独立 error 页 —— SPA 下错误可见的最自然方式）；后端回到原账本 / owner 恢复 / 通知成员等逻辑本就完整，原样保留。
+
+**验证**：`npm run build` **0 错误、✓ built in 55.56s**；后端 `node --check` 通过。**未启动/停止任何服务实例**。**注意**：后端 `src/routes/auth.js` 有改动，**需重启 5111 生效**。
+
 ---
 
 ### G 组｜裸页（无侧栏）
@@ -1157,8 +1188,8 @@ B1 第二轮修复（用户截图反馈后）：
 | G1 | 裸布局 | `layout-blank.ejs` | `BlankLayout.vue` | 待确认 | 见下方修复清单（4 致命/隐性 + 1 功能缺失）；**有意偏离：保留新版卡片宽度（420/480px，老版 400px）+ 无 manifest** |
 | G2 | 登录 | `login.ejs` | `LoginView.vue` | 待确认 | 见下方修复清单（4 致命/隐性 + 3 功能缺失）；**有意偏离：保留新版 NForm 控件 + 未初始化提示 + 「记住我」选项** |
 | G3 | 初始化 | `setup.ejs` | `SetupView.vue` | 待确认 | 见下方修复清单（3 致命/隐性 + 4 文案差异）；**有意偏离：保留新版已初始化提示 + 前端预校验 + 密码明文切换** |
-| G4 | 注册 | `register.ejs` | `RegisterView.vue` | 待确认 | 见下方修复清单（4 致命/隐性 + 7 功能缺失，核心为表单整体缺失）；**有意偏离：保留新版 NForm 控件 + 未开放注册提示跳转 + 前端预校验** |
-| G5 | 加入账本 | `join.ejs` | `JoinView.vue` | 待修 | |
+| G4 | 注册 | `register.ejs` | `RegisterView.vue` | 已确认 | 见下方修复清单（4 致命/隐性 + 7 功能缺失，核心为表单整体缺失）；**有意偏离：保留新版 NForm 控件 + 未开放注册提示跳转 + 前端预校验** |
+| G5 | 加入账本 | `join.ejs` | `JoinView.vue` | 待确认 | 见下方修复清单（4 致命/隐性 + 7 功能缺失，核心为前后端路由不匹配导致点邀请链接 404 + 占位页）；**有意偏离：错误改页内错误卡（老版独立 error 页）+ 保留新版 BlankLayout 品牌头** |
 | G6 | 404 | `error.ejs` | `NotFoundView.vue` | 待修 | |
 | G7 | 空账本态 | `no-ledger.ejs` | 缺 | 待修 | |
 
@@ -1178,7 +1209,7 @@ B1 第二轮修复（用户截图反馈后）：
 | P3 | G1~G7 | 裸页，改动相对独立 |
 
 > A3（全局 CSRF）已随 C2 一并处理并实测通过 ✅ 已确认。
-> **P0/P1 及 P2 的 D2~D7、E1~E4 已全部完成并确认**。F 组已修 **F4（已确认）、F1（待确认）、F2（待确认）、F3（待确认）、F5（待确认）**；**F 组已全部修复完毕**。G 组已修 **G1（待确认）、G2（待确认）、G3（待确认）、G4（待确认）**；下一项按顺序为 **G5 加入账本**（G6~G7 随后）。
+> **P0/P1 及 P2 的 D2~D7、E1~E4 已全部完成并确认**。F 组已修 **F4（已确认）、F1（待确认）、F2（待确认）、F3（待确认）、F5（待确认）**；**F 组已全部修复完毕**。G 组已修 **G1（待确认）、G2（待确认）、G3（待确认）、G4（已确认）、G5（待确认）**；下一项按顺序为 **G6 404 页**（G7 随后）。
 
 ---
 
@@ -1224,3 +1255,4 @@ B1 第二轮修复（用户截图反馈后）：
 | 2026-10-30 | G2 | 登录页按老版 `login.ejs`（30 行）+ `routes/auth.js`（登录段 19-59 行）逐项对齐 `LoginView.vue`（用户决策：全量 7 项）。老版两版登录核心逻辑一致（`safeNext` 防开放重定向、失败次数限制、session regenerate、审计日志、锁定提示），新版只是把 `render('login', { error })` 换成 `flash + redirect` → **差异集中在错误回传与前端交互**。**4 个致命/隐性缺陷**：① **登录失败提示完全丢失** —— 新版后端 `res.redirect(401, '/login?...')` + `res.flash('error', ...)`，但 **flash 是 SSR 机制，SPA 前端不读**（`useFlash` 是纯前端队列，不拉服务端 flash）→ 前端只在 `catch` 里拼固定文案，用户看不到「尝试次数过多，请在 N 分钟后重试。」等准确文案。已在后端 `POST /login` 增加 JSON 分支（`Accept: application/json` 时直接返 `{ ok:false, error }`，覆盖 401 密码错 / 429 锁定 / 500 会话失败），前端 `api/auth.ts` 的 `login()` 解析 JSON 分支并保留 SSR 分支兜底；② **「记住我」是假开关** —— 新版有 `NCheckbox remember` 但 `login()` **根本没传 remember**，后端也无对应逻辑 → 勾了完全没作用（cookie 固定 30 天）。已改为前端传 `remember=1/0`，后端登录成功后按值设置 `req.session.cookie.maxAge` / `originalMaxAge`（勾选=持久 cookie 30 天，与老版一致；不勾=会话 cookie，浏览器关闭即失效）；③ **登录后不校验是否真的登录成功** —— 原先 `r.ok` 为 true 就 `router.replace(next)`，若后端 302 回 /login 会误判成功。已改为登录后 `await session.refresh()` 再判断 `session.isAuthed`，未登录则提示「登录失败，请重试」；④ **注册入口永远不显示** —— 新版用 `csrfFetch('/api/v1/admin/settings')` 探测 `site.allow_register`，但该端点是 `auth.requireLogin` → **未登录必然 401**，`allowRegister` 永远是 `false`。已改由 `/api/v1/session`（未登录可访问）下发 `allowRegister`，`session` store 增加该状态，登录页不再单独探测 `/admin/settings`。**3 项功能缺失**：⑤ 补「欢迎回来」标题 + 「请使用你的账号密码登录」副标题；⑥ 补底部「还没有账号？注册一个」链接（老版无条件显示，点击后由后端 `GET /register` 判断是否开放注册，新版在前端做同样判断并提示「本站未开放自助注册，请联系管理员邀请你加入账本。」，避免跳到占位页）；⑦ 失败后回填用户名（前端读 `route.query.u`）。**连带修复 2 项跨组隐性缺陷**：⑧ **`res.locals.siteName` / `baseCurrency` / `aiUsable` 从未被赋值** —— 新版 `server.js` 的全局上下文中间件只留了一句「SPA 时代：不再注入 res.locals」，但 `/api/v1/session` 仍在读这三个值 → 前端 `siteName` 永远回落默认值「家账簿」，**站点改名后侧栏 / 页面标题 / 登录页品牌名全都不跟随**（G1 修的「标题跟随 siteName」因此实际失效），`aiUsable` 永远 false → AI 面板一直显示「未配置模型」。已对齐老版 `server.js:123-128` 补赋值；⑨ **`res.locals.needsSetup` 赋值时机太晚** —— 原设在 `/api/v1` 挂载**之后**的中间件里 → `/api/v1/session` 读到 `undefined` → 登录页「还没创建管理员账号，前往初始化」提示永远不显示，已提前到 `/api/v1` 挂载之前。**有意偏离**：保留新版 NForm 控件、autocomplete、next 透传、Enter 提交、密码明文切换、未初始化提示、「记住我」选项。**G3~G6 的页面内容本次不动**。`npm run build` 0 错误、`node --check` 通过。**注意**：后端 `server.js` / `src/routes/auth.js` / `src/routes/apiV1.js` 有改动，**需重启 5111 生效**。**待确认** |
 | 2026-10-30 | G3 | 初始化页按老版 `setup.ejs`（32 行）+ `routes/auth.js` setup 段逐项对齐 `SetupView.vue`（用户决策：全量 7 项）。后端校验与创建流程两版一致（用户名正则 / 密码 8 位 / 两次一致 → 建用户 + 默认账本 + site.name + 审计 + session regenerate），**问题集中在错误回传与文案** —— 与 G2 同源（`/setup` 当时不在 G2 范围内，本次补齐）。**3 个致命/隐性缺陷**：① **错误提示显示为 HTML 片段** —— 后端 `fail()` 是 `res.redirect(400, '/setup?...')` + flash；前端 `validateStatus` 只放行 < 400 → 400 进 catch；Express redirect 的响应体是一段 `Moved Temporarily. Redirecting to...` HTML（< 500 字符），正好命中前端「解析 HTML 错误信息（粗略）」的逻辑 → 错误提示直接显示 HTML 原文，且 SPA 读不到 flash 里的准确文案（「用户名需 3–32 位…」等）。已在后端 `POST /setup` 加与 `/login` 同款 JSON 分支（`wantsJson` → 400 校验失败 `{ok:false,error}` / 409 已初始化 / 500 会话失败 / 200 成功 `{ok:true}`），前端加 `Accept: application/json` 头、`validateStatus` 放行到 < 500、按 `j.ok` 字段统一处理，catch 读 `e.response.data.error`；② **失败后表单全部清空** —— 后端 redirect 已带 `?u=&d=&s=` 三个回填参数但前端没读（同 G2-B3），已在 `onMounted` 读 `route.query` 的 u/d/s 回填用户名/昵称/站点名（JSON 分支下前端字段本就不会丢，此处兜底 SSR 分支）；③ **hasUser 时误判成功** —— 已初始化后 POST `/setup`，后端 `res.redirect('/login')`，前端 `res.status === 302` 判定成功 → 弹「初始化完成」→ 跳 `/` 被路由守卫踢回登录页。已改为成功路径统一先 `await session.refresh()` 再判断 `session.isAuthed`（对齐 G2-A3），SSR 兜底分支识别 302 时提示「系统已存在管理员账号，请直接登录。」。**4 项文案差异**：④ 补 H1「初始化你的账本」+ 副标题「这是第一次启动，请创建管理员账号」（原只有「创建你的第一个管理员账号」）；⑤ 字段标签对齐老版（「管理员用户名 / 昵称 / 管理员密码」，原为「用户名 / 显示名称 / 密码」）；⑥ 补密码框下方 help「至少 8 位，建议同时包含字母与数字」；⑦ 站点名称补 `:maxlength="20"`、昵称 placeholder 对齐「例如：老王」。**有意偏离**：保留新版已初始化提示 + 1.5 秒延迟跳转（新版增强，G2 已修好 `needsSetup` 赋值时机）、NForm 控件与密码明文切换、前端预校验（老版纯靠后端，新版双保险）、BlankLayout 品牌头（G1 已统一）。`npm run build` 0 错误、`node --check` 通过。**注意**：后端 `src/routes/auth.js` 有改动，**需重启 5111 生效**。**待确认** |
 | 2026-10-30 | G4 | 注册页按老版 `register.ejs`（31 行）+ 老版 `routes/auth.js` register 段逐项对齐 `RegisterView.vue` + `api/auth.ts`（用户决策：全量 11 项）。新版后端与老版逻辑一致（用户名正则 / **密码 6 位** / 两次一致 / 用户名占用 → 建用户 + 默认账本 + 审计 + session regenerate），差异在**前端整个表单缺失** + 错误回传（与 G2/G3 同源）。**4 个致命/隐性缺陷**：① **注册表单完全缺失** —— RegisterView 是占位页（📝 + 「表单待补」），站点开了自助注册用户点「注册一个」进来却没有可填的表单，已整个重写为 4 字段表单（用户名/昵称/密码/确认密码）+ 前端校验 + 提交 + isAuthed 校验 + 成功提示 + 底部「直接登录」+ 未开放注册拦截（复用 SetupView 模式）；② **后端无 JSON 分支** —— `fail()` 是 `res.redirect(400, '/register?...')` + flash → SPA 拿到 HTML 片段，未开放注册时 `redirect(403, '/login')` 同样进 catch，已在后端 `POST /register` 加与 `/login`、`/setup` 同款 JSON 分支（`wantsJson` → 403 未开放 / 400 校验失败 / 500 会话失败 / 200 成功）；③ **成功后不校验 isAuthed**（同 G2-A3 / G3-A3），已改为成功路径统一 `await session.refresh()` 再判断 `session.isAuthed`，未登录提示「注册异常，请尝试手动登录」；④ **api 层传死参数** —— `register()` 传 `invite_code` 但后端根本不收（老版也不收），且无 `Accept: application/json` 头 → 后端走 SSR 分支，已删 `invite_code`、加 Accept 头、`validateStatus` 放行到 < 500、按 `j.ok` 统一处理、SSR 兜底识别 403。**7 项功能/文案补齐**：⑤ 成功提示「注册成功，已为你创建默认账本与账户。」（原为 session.flash，SPA 读不到，改前端 `message.success`）；⑥ 底部「已有账号？直接登录」链接；⑦ help 文案（用户名「3–32 位，字母、数字、下划线、点、@ 或短横线」/ 密码「至少 6 位」）；⑧ 前端预校验按 **6 位**（注册密码 6 位，区别于 setup 的 8 位）；⑨ 昵称 placeholder「例如：老王」；⑩ 未开放注册时的行为对齐老版 —— 读 `session.allowRegister`（G2 已由 /api/v1/session 下发）拦截，NAlert 提示「本站未开放自助注册，请联系管理员邀请你加入账本。」+ 1.5 秒后跳 /login（原占位页只显示「表单待补」）；⑪ `onMounted` 读 `route.query` 的 u/d 回填用户名/昵称（兜底 SSR 分支）。**表单字段口径**：老版 4 字段、无 email 输入框（后端支持存储但表单没有，恒为空，两版一致），新版对齐不加 email 框、api 层可选参数保留。**有意偏离**：保留 BlankLayout 品牌头（G1）、NForm 控件 + 密码明文切换、前端预校验双保险、未开放注册时 1.5 秒延迟跳转提示。`npm run build` 0 错误、`node --check` 通过。**注意**：后端 `src/routes/auth.js` 有改动，**需重启 5111 生效**。**待确认** |
+| 2026-10-30 | G5 | 加入账本按老版 `join.ejs`（15 行）+ 老版 `routes/auth.js` resolveInvite/join 段逐项对齐 `JoinView.vue` + `api/auth.ts` + 新版 `routes/auth.js`（用户决策：全量 11 项）。新版后端加入主链路本就完整（邀请校验/已是成员处理/回到原账本记忆/owner 角色恢复/通知成员），但**全靠 flash + redirect**（SPA 无人消费）；前端则是占位页 + **前后端路由不匹配**。**4 个致命/隐性缺陷**：① **前后端路由不匹配 → 点邀请链接 404** —— 后端 redirect 到 `/join?code=xxx&ledger=…`（query 形式），前端只注册了 `/join/:token`（路径参数），`/join` 匹配不到路由，且 JoinView 读 `params.token`、后端传 `query.code` 来源对不上，已把 GET redirect 目标改为 `/join/{code}?ledger=…`（code 进路径段对齐前端路由，query 只传 ledger/role/creator/expires）；② **JoinView 是占位页** —— 只显示邀请码 + 「确认加入表单待补」，已整体重写为完整确认页（错误卡/已成员提示/邀请信息卡 + 确认加入按钮 + 底部提示）；③ **joinLedger() 是旧 SSR 模式** —— 无 Accept 头（错误时后端 404/410 redirect 前端拿 HTML 片段；成功与「已是成员」的 302 无法区分），且传 `display_name`/`password` 死参数（老版表单只有 _csrf，后端不读），已对齐 login/register 模式：Accept 头 + `validateStatus < 500` + `j.ok` 统一处理、删死参数、返回 `alreadyMember`/`ledgerName`/`message`；④ **服务端 flash 全丢** —— 邀请无效/过期/已用/账本删除时静默回首页、「已是成员」时账本切了但没提示，已在 `resolveInvite` 加 JSON 分支（POST 时返 404/410 JSON；GET 时 redirect 回 `/join/{code}?error=…`）、GET「已是成员」redirect 回 join 页带 `?already=1`、POST 加 `wantsJson`（成功/alreadyMember 返 JSON）。**7 项功能/文案补齐**：⑤ 邀请信息卡「你被邀请以 {角色} 身份加入账本「{账本}」」+「邀请由 {创建人} 创建 · 有效期至 {日期}」（role 经 ROLE_LABEL 转中文）；⑥ 「确认加入」按钮调 `joinLedger(code)`；⑦ 底部提示「不想加入？直接关闭本页即可，邀请不会被使用。」三种状态都显示；⑧ 成功提示「已加入账本「X」，可随时在右上角切换账本」+ `session.refresh()` 同步账本上下文 + 跳首页；⑨ 「已是成员」提示（JSON `alreadyMember` → `message.info`；GET 场景 `?already=1` → 页内 NAlert「你已是账本「X」的成员，无需重复加入。」）；⑩ 未登录拦截：`onMounted` 校验 `session.isAuthed`，未登录跳 `/login?next=/join/xxx`（登录后回来继续，对齐老版 requireLogin）；⑪ 错误展示为页内 NAlert error 卡（`?error=` 回传/提交失败/缺邀请码三种来源）。**有意偏离**：错误展示改为 redirect 回 join 页带 query 由前端展示错误卡（老版渲染独立 error 页，SPA 下错误可见的最自然方式）+ 保留 BlankLayout 品牌头与 NButton；后端回到原账本/owner 恢复/通知成员等逻辑本就完整，原样保留。`npm run build` 0 错误（✓ built in 55.56s）、`node --check` 通过。**注意**：后端 `src/routes/auth.js` 有改动，**需重启 5111 生效**。**待确认** |

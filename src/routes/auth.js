@@ -226,26 +226,27 @@ router.post('/ledgers/switch', auth.requireLogin, (req, res) => {
 
 /** 邀请码校验（GET 展示确认页 / POST 执行加入共用）；返回 { invite, ledger } 或已直接响应 */
 function resolveInvite(req, res) {
+  // SPA 端（Accept: application/json）直接返 JSON 错误；浏览器点链接则回 join 确认页带 error 提示。
+  // 老版此处渲染独立 error 页；SPA 时代 flash 无人消费，改为 query 交给前端 JoinView 展示错误卡。
+  const wantsJson = (req.headers.accept || '').includes('application/json');
   const code = String(req.params.code || '').trim();
+  const fail = (status, error) => {
+    if (wantsJson) return res.status(status).json({ ok: false, error });
+    const qs = new URLSearchParams({ error }).toString();
+    res.status(status).redirect(`/join/${encodeURIComponent(code)}?${qs}`);
+    return null;
+  };
   const invite = get('SELECT * FROM ledger_invites WHERE code = ?', code);
-  if (!invite) {
-    res.flash('error', '邀请链接不存在或已被删除。');
-    res.status(404).redirect('/'); return null;
-  }
+  if (!invite) return fail(404, '邀请链接不存在或已被删除。');
   if (invite.expires_at && invite.expires_at < require('../db').todayStr()) {
-    res.flash('error', '邀请已过期，请让账本管理员重新生成邀请链接。');
-    res.status(410).redirect('/'); return null;
+    return fail(410, '邀请已过期，请让账本管理员重新生成邀请链接。');
   }
   // 已使用的邀请一律不能再入（含本人）：否则被降级/移出的成员可拿旧链接恢复原角色
   if (Number(invite.used_by)) {
-    res.flash('error', '该邀请链接已被使用，请让账本管理员重新生成。');
-    res.status(410).redirect('/'); return null;
+    return fail(410, '该邀请链接已被使用，请让账本管理员重新生成。');
   }
   const ledger = get('SELECT * FROM ledgers WHERE id = ?', invite.ledger_id);
-  if (!ledger) {
-    res.flash('error', '该账本已被删除。');
-    res.status(404).redirect('/'); return null;
-  }
+  if (!ledger) return fail(404, '该账本已被删除。');
   return { invite, ledger };
 }
 
@@ -256,32 +257,30 @@ router.get('/join/:code', auth.requireLogin, (req, res, next) => {
   const { invite, ledger } = found;
   if (auth.membership(req.session.userId, invite.ledger_id)) {
     req.session.ledgerId = Number(invite.ledger_id);
-    req.session.flash = { type: 'info', message: `你已是账本「${ledger.name}」的成员` };
-    return res.redirect('/');
+    // SPA：flash 无人消费，回 join 页带 already 提示（对齐老版「你已是成员」的可见反馈）
+    return res.redirect(`/join/${encodeURIComponent(invite.code)}?already=1&ledger=${encodeURIComponent(ledger.name)}`);
   }
-  // 把邀请信息塞到 flash / query，前端 /join 页面读取并展示
-  req.session.flash = {
-    type: 'info',
-    message: `邀请码：${invite.code} · 账本「${ledger.name}」`,
-  };
+  // 邀请信息经 query 交给前端 /join/:token 确认页展示（redirect 目标必须与前端路由 /join/:token 一致）
   const qs = new URLSearchParams({
-    code: invite.code,
     ledger: ledger.name,
     role: auth.ROLE_LABEL[invite.role] || '成员',
     creator: (get('SELECT display_name FROM users WHERE id = ?', invite.created_by) || {}).display_name || '—',
     expires: invite.expires_at || '',
   }).toString();
-  res.redirect(`/join?${qs}`);
+  res.redirect(`/join/${encodeURIComponent(invite.code)}?${qs}`);
 });
 
 /** 确认加入（POST） */
 router.post('/join/:code', auth.requireLogin, (req, res) => {
+  // 与 /login、/setup、/register 同款：SPA 端（Accept: application/json）直接返 JSON，不走 flash + redirect
+  const wantsJson = (req.headers.accept || '').includes('application/json');
   const found = resolveInvite(req, res);
   if (!found) return;
   const { invite, ledger } = found;
   const code = invite.code;
   if (auth.membership(req.session.userId, invite.ledger_id)) {
     req.session.ledgerId = Number(invite.ledger_id);
+    if (wantsJson) return res.json({ ok: true, alreadyMember: true, ledgerName: ledger.name, message: `你已是账本「${ledger.name}」的成员` });
     req.session.flash = { type: 'info', message: `你已是账本「${ledger.name}」的成员` };
     return res.redirect('/');
   }
@@ -312,6 +311,7 @@ router.post('/join/:code', auth.requireLogin, (req, res) => {
       link: '/members',
     });
   }
+  if (wantsJson) return res.json({ ok: true, ledgerName: ledger.name, message: `已加入账本「${ledger.name}」，可随时在右上角切换账本` });
   req.session.flash = { type: 'success', message: `已加入账本「${ledger.name}」，可随时在右上角切换账本` };
   res.redirect('/');
 });

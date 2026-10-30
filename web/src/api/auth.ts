@@ -94,23 +94,42 @@ export async function register(payload: {
   }
 }
 
+interface JoinResult extends LoginResult {
+  alreadyMember?: boolean
+  ledgerName?: string
+  message?: string
+}
+
 /**
- * 通过邀请码加入账本
+ * 通过邀请码加入账本：POST /join/:code
+ *
+ * 后端在 Accept: application/json 时直接返回
+ * { ok: true, ledgerName, message } / { ok: true, alreadyMember: true, ... } / { ok: false, error }；
+ * 否则退回 SSR 行为（302 重定向 + flash）。两种都兼容。
+ * 老版表单只提交 _csrf（无 display_name/password 字段），后端也不读这两个参数。
  */
-export async function joinLedger(token: string, displayName?: string, password?: string): Promise<LoginResult> {
+export async function joinLedger(code: string): Promise<JoinResult> {
   const body = new URLSearchParams()
-  if (displayName) body.set('display_name', displayName)
-  if (password) body.set('password', password)
   body.set('_csrf', getCsrf())
   try {
-    await api.post(`/join/${encodeURIComponent(token)}`, body, {
+    const res = await api.post(`/join/${encodeURIComponent(code)}`, body, {
       baseURL: '/',
       maxRedirects: 0,
-      validateStatus: (s) => s >= 200 && s < 400,
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      // 后端 JSON 分支失败时返 404/410，也要进成功路径由下面的 ok 字段统一处理
+      validateStatus: (s) => s >= 200 && s < 500,
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'application/json' },
     })
+    // 后端 JSON 分支
+    const j = res.data
+    if (j && typeof j.ok === 'boolean') {
+      return j.ok
+        ? { ok: true, alreadyMember: !!j.alreadyMember, ledgerName: j.ledgerName, message: j.message }
+        : { ok: false, error: j.error || '加入失败' }
+    }
+    // 兜底：SSR 重定向分支（后端未走 JSON 时）
     return { ok: true }
   } catch (e: any) {
-    return { ok: false, error: e?.response?.data?.error || e?.message || '加入失败' }
+    const msg = e?.response?.data?.error || e?.message || '加入失败'
+    return { ok: false, error: msg }
   }
 }
