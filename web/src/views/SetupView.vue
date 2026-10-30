@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { NCard, NForm, NFormItem, NInput, NButton, NText, NAlert } from 'naive-ui'
+import { NForm, NFormItem, NInput, NButton, NText, NAlert } from 'naive-ui'
 import { useMessage } from 'naive-ui'
 import BlankLayout from '@/layouts/BlankLayout.vue'
 import { api } from '@/api/client'
@@ -89,12 +89,8 @@ async function onSubmit() {
 </script>
 
 <template>
-  <BlankLayout title="初始化家账簿">
-    <NCard :bordered="true" class="setup-card" size="large">
-      <div class="brand">
-        <span class="logo">📒</span>
-        <span class="name">家账簿 · 初始化</span>
-      </div>
+  <BlankLayout title="初始化" width="480px">
+    <div class="setup">
       <NText depth="3" class="sub">创建你的第一个管理员账号</NText>
 
       <NAlert v-if="!allowed" type="info" :show-icon="true" class="alert">
@@ -158,23 +154,13 @@ async function onSubmit() {
           创 建 并 进 入
         </NButton>
       </NForm>
-    </NCard>
+    </div>
   </BlankLayout>
 </template>
 
 <style scoped>
-.setup-card {
-  width: 100%;
-  max-width: 480px;
-  border-radius: 12px;
-}
-.brand {
-  display: flex; align-items: center; gap: 8px;
-  font-size: 18px; font-weight: 600;
-  margin-bottom: 4px;
-}
-.brand .logo { font-size: 22px; }
-.sub { font-size: 13px; }
+.setup { width: 100%; }
+.sub { font-size: 13px; display: block; margin-bottom: 4px; }
 .alert { margin: 12px 0; }
 .form { margin-top: 16px; }
 </style>

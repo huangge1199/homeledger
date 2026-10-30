@@ -2,10 +2,16 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/static/icon.svg" />
+    <!-- 内联 SVG 图标：老版 layout-blank.ejs / layout.ejs 同款，避免额外请求与 404 -->
+    <link
+      rel="icon"
+      href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📒</text></svg>"
+    />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="color-scheme" content="light dark" />
     <meta name="theme-color" content="#3d6df5" />
+    <!-- CSRF 令牌：由 session store 在拉取 /api/v1/session 后回填（对齐老版 layout 的 meta csrf） -->
+    <meta name="csrf" content="" />
     <title>家账簿</title>
   </head>
   <body>

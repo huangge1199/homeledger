@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, watch } from 'vue'
 import { darkTheme, NConfigProvider, NMessageProvider, NDialogProvider, NNotificationProvider, NSpin, NText, NLoadingBarProvider, zhCN, dateZhCN } from 'naive-ui'
-import { RouterView } from 'vue-router'
+import { RouterView, useRoute } from 'vue-router'
 import { useSessionStore } from '@/stores/session'
 import { useFlash } from '@/composables/useFlash'
 import { storeToRefs } from 'pinia'
@@ -9,6 +9,7 @@ import AppSplash from '@/components/AppSplash.vue'
 import { lightThemeOverrides } from '@/theme/naive'
 
 const session = useSessionStore()
+const route = useRoute()
 const { items } = useFlash()
 const { theme, loaded, loading } = storeToRefs(session)
 
@@ -22,6 +23,13 @@ onMounted(async () => {
 watch(theme, (t) => {
   document.documentElement.setAttribute('data-theme', t)
 }, { immediate: true })
+
+// 站点名可自定义（设置页可改），标题要跟着走 —— 老版 layout 的 <title> 用的是 siteName
+watch(() => session.siteName, () => {
+  const t = route.meta?.title as string | undefined
+  const site = session.siteName || '家账簿'
+  document.title = t ? `${t} · ${site}` : site
+})
 
 // 启动时根据是否有用户决定显示哪套布局
 </script>

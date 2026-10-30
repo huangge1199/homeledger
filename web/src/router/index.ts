@@ -107,9 +107,10 @@ router.beforeEach(async (to, _from, next) => {
   next()
 })
 
-// 标题
+// 标题：老版 layout.ejs / layout-blank.ejs 用的是站点名（siteName，可自定义），
+// 这里跟随 session.siteName，站点改名后标题同步更新
 router.afterEach((to) => {
   const t = to.meta?.title as string | undefined
-  if (t) document.title = `${t} · 家账簿`
-  else document.title = '家账簿'
+  const site = useSessionStore().siteName || '家账簿'
+  document.title = t ? `${t} · ${site}` : site
 })

@@ -109,6 +109,10 @@ export const useSessionStore = defineStore('session', {
         this.siteName = d.siteName || '家账簿'
         this.baseCurrency = d.baseCurrency || 'CNY'
         this.unreadCount = Number(d.unreadCount || 0)
+        // 回填 <meta name="csrf">：老版 layout.ejs / layout-blank.ejs 都会渲染该 meta，
+        // 部分视图（如 SetupView 的 getCsrf）会从 DOM 读它作为兜底
+        const meta = document.querySelector('meta[name="csrf"]') as HTMLMetaElement | null
+        if (meta) meta.content = this.csrf || ''
         if (d.user?.theme) this.setTheme(d.user.theme)
         else this.setTheme(this.theme)
         this.loaded = true
