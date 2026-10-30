@@ -184,6 +184,12 @@ const SKIP_STATUS = /已关闭|交易关闭|已退款|全额退款|退款成功|
 /** 导出 CSV type_key 列的合法值 */
 const TXN_KEYS = new Set(['expense','income','transfer','lend','borrow','repay_receive','repay_pay','reimburse','refund','fee','interest','invest_buy','invest_sell','adjust']);
 
+/** 从日期列提取消费时刻：与 txn.js 一致接受 HH:mm 或 HH:mm:ss，统一存 HH:mm:ss；提取不出为 null */
+function extractTime(v) {
+  const m = String(v || '').match(/([01]\d|2[0-3]):([0-5]\d)(?::([0-5]\d))?/);
+  return m ? `${m[1]}:${m[2]}:${m[3] || '00'}` : null;
+}
+
 function normalizeRow({ date, direction, amountText, merchant, desc, categoryText, accountText, status, orderNo, typeKey }) {
   const amountCents = parseAmountToCents(amountText);
   const dir = String(direction || '').trim();
@@ -209,6 +215,7 @@ function normalizeRow({ date, direction, amountText, merchant, desc, categoryTex
     type,
     amount_cents: amountCents,
     txn_date: normalizeDate(date),
+    txn_time: extractTime(date),
     merchant: (merchant || desc || '').slice(0, 60) || null,
     note: [categoryText, desc, status].filter(Boolean).join(' · ').slice(0, 200) || null,
     category_hint: categoryText || null,
@@ -337,19 +344,34 @@ function importRecords({
 
   tx(() => {
     for (const [lid, recs] of buckets) {
-      const dupSet = new Set();
-      // 预载该账本已有记录指纹，避免重复导入（分账本判重）
+      // 判重指纹 = 日期|金额|商家|时刻。时刻纳入后，同日同额同商家的多笔真实交易
+      // （连扫两笔地铁、连续充值）不再被误杀；库中无时刻的记录按前缀保守判重
+      const fullSet = new Set();          // 完整指纹（含时刻，无时刻记录后缀为空串）
+      const timelessPrefixes = new Set(); // 无时刻记录的 日期|金额|商家 前缀（旧行为兼容）
+      const timedPrefixes = new Set();    // 有时刻记录的前缀
       for (const t of all(
-        'SELECT txn_date, amount_base_cents, merchant FROM transactions WHERE ledger_id = ? AND deleted_at IS NULL AND source = ?',
+        'SELECT txn_date, amount_base_cents, merchant, txn_time FROM transactions WHERE ledger_id = ? AND deleted_at IS NULL AND source = ?',
         lid, 'import'
       )) {
-        dupSet.add(`${t.txn_date}|${t.amount_base_cents}|${t.merchant || ''}`);
+        const base = `${t.txn_date}|${t.amount_base_cents}|${t.merchant || ''}`;
+        if (t.txn_time) { fullSet.add(`${base}|${t.txn_time}`); timedPrefixes.add(base); }
+        else { fullSet.add(`${base}|`); timelessPrefixes.add(base); }
       }
 
       for (const rec of recs) {
         try {
-          const fp = `${rec.txn_date}|${rec.amount_cents}|${rec.merchant || ''}`;
-          if (dupSet.has(fp)) { skipped++; continue; }
+          // 指纹金额必须与入库值一致：expense/income 入库时钳回正数，负金额记录（如 -0.01 退款）
+          // 若用原始值算指纹，第二遍导入会因库里是正数而对不上
+          const signedAmount = rec.type === 'adjust' ? rec.amount_cents : Math.abs(rec.amount_cents);
+          const base = `${rec.txn_date}|${signedAmount}|${rec.merchant || ''}`;
+          const fp = `${base}|${rec.txn_time || ''}`;
+          if (rec.txn_time) {
+            // 带时刻：精确指纹命中跳过；库中同前缀但无时刻的旧记录无法区分是否同一笔，保守跳过
+            if (fullSet.has(fp) || timelessPrefixes.has(base)) { skipped++; continue; }
+          } else if (fullSet.has(fp) || timedPrefixes.has(base)) {
+            // 不带时刻（家账簿导出 CSV 无时间列）：同前缀已存在即视为重复
+            skipped++; continue;
+          }
 
           let categoryId = null;
           let toAccountId = null;
@@ -377,21 +399,18 @@ function importRecords({
             if (!categoryId && kw) categoryId = resolveCategoryId(lid, kw.category, kw.kind === 'income' ? 'income' : kind);
             if (!categoryId) categoryId = resolveCategoryId(lid, kind === 'income' ? '其他收入' : '其他支出', kind);
           }
-          // 余额调整回导保留负金额（调减为带符号数），方向不能翻转；
-          // 但 expense/income 直接以负数入库会把方向写反（txnEffects 对 expense 取 -a），钳回正数
-          const signedAmount = rec.type === 'adjust' ? rec.amount_cents : Math.abs(rec.amount_cents);
-
           run(
             `INSERT INTO transactions
              (ledger_id, type, amount_cents, currency, rate, amount_base_cents, account_id, to_account_id, category_id,
-              user_id, txn_date, note, merchant, status, source, ai_json, created_at, updated_at)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+              user_id, txn_date, txn_time, note, merchant, status, source, ai_json, created_at, updated_at)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
             lid, rec.type, signedAmount, 'CNY', 1, signedAmount,
-            accountId, toAccountId, categoryId, userId, rec.txn_date, rec.note, rec.merchant,
+            accountId, toAccountId, categoryId, userId, rec.txn_date, rec.txn_time, rec.note, rec.merchant,
             'cleared', 'import', JSON.stringify({ source, order_no: rec.order_no, neutral: !!rec.neutral }),
             nowStr(), nowStr()
           );
-          dupSet.add(fp);
+          fullSet.add(fp);
+          (rec.txn_time ? timedPrefixes : timelessPrefixes).add(base);
           imported++;
           importedPerLedger[lid] = (importedPerLedger[lid] || 0) + 1;
         } catch {
