@@ -5,7 +5,7 @@
 # ==============================================================
 
 # ---------- 前端构建 ----------
-FROM node:22-slim AS web-builder
+FROM node:latest AS web-builder
 WORKDIR /build
 
 COPY web/package.json web/package-lock.json* ./
@@ -15,7 +15,7 @@ COPY web/ ./
 RUN npm run build
 
 # ---------- 运行时 ----------
-FROM node:22-slim
+FROM node:latest
 
 ENV TZ=Asia/Shanghai \
     NODE_ENV=production \
