@@ -13,7 +13,7 @@ Write your rules here to customize the style of AI-generated commit messages.
 
 要求：
 - type 使用 feat / fix / docs / style / refactor / perf / test / chore 等
-- 范围写功能模块或页面名称
+- 范围写功能模块或页面名称，使用中文
 - 标题一句话概括，不超过 50 字
 - 正文用「1、2、3、」编号，每点一句话说清改了什么
 - 用中文，不要用 markdown 符号，不要加额外说明
