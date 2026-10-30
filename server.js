@@ -103,7 +103,15 @@ app.use((req, res, next) => {
 });
 
 app.use((req, res, next) => {
-  // SPA 时代：不再注入 res.locals（视图已退役）
+  // SPA 时代：视图已退役，但 /api/v1/session 仍从 res.locals 取这几个全局值，
+  // 漏赋值会让前端 siteName 永远回落到默认值「家账簿」，
+  // 站点改名后侧栏、页面标题、登录页品牌名都不会跟着变。
+  res.locals.siteName = db.getSetting('site.name', '家账簿');
+  res.locals.baseCurrency = db.getSetting('site.currency', 'CNY');
+  res.locals.aiUsable = require('./src/lib/ai').isAiUsable();
+  // 注意：必须在这里赋值 —— /api/v1 挂载在下面，needsSetup 若在更靠后的
+  // 中间件里设，/api/v1/session 读到的永远是 false（登录页的「前往初始化」提示会失效）
+  res.locals.needsSetup = Number(db.get('SELECT COUNT(*) AS c FROM users')?.c || 0) === 0;
   next();
 });
 
@@ -127,9 +135,7 @@ app.use((req, res, next) => {
 
 /** 首次运行且无用户 → 强制进入初始化 */
 app.use((req, res, next) => {
-  const hasUser = Number(db.get('SELECT COUNT(*) AS c FROM users')?.c || 0) > 0;
-  res.locals.needsSetup = !hasUser;
-  if (!hasUser && !['/setup', '/healthz'].includes(req.path) && !req.path.startsWith('/static')) {
+  if (res.locals.needsSetup && !['/setup', '/healthz'].includes(req.path) && !req.path.startsWith('/static')) {
     return res.redirect('/setup');
   }
   next();

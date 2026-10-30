@@ -39,35 +39,55 @@ router.post('/login', (req, res) => {
   const username = String(req.body.username || '').trim();
   const password = String(req.body.password || '');
   const next = safeNext(req.body.next);
+  const remember = String(req.body.remember || '') === '1';
   const maxFail = Number(getSetting('security.login_max_fail', '10')) || 10;
+  // SPA 端（Accept: application/json）直接返 JSON 错误，不走 flash + redirect：
+  // 老版靠 render('login', { error }) 把错误渲染回页面，v2 前端拿不到 flash，
+  // 只能靠这里返回结构化错误，否则用户登录失败时看不到任何提示。
+  const wantsJson = (req.headers.accept || '').includes('application/json');
+  const fail = (status, message, extra = {}) => {
+    if (wantsJson) return res.status(status).json({ ok: false, error: message, ...extra });
+    res.flash('error', message);
+    const qs = new URLSearchParams({ next, u: username }).toString();
+    return res.redirect(status, `/login?${qs}`);
+  };
 
   const locked = auth.tooManyAttempts(req, username, maxFail);
   if (locked) {
-    res.flash('error', `尝试次数过多，请在 ${locked} 分钟后重试。`);
-    const qs = new URLSearchParams({ next }).toString();
-    return res.redirect(429, `/login?${qs}`);
+    return fail(429, `尝试次数过多，请在 ${locked} 分钟后重试。`);
   }
   const user = get('SELECT * FROM users WHERE username = ?', username);
   if (!user || user.status !== 'active' || !auth.verifyPassword(password, user.password_hash)) {
     auth.recordFailure(req, username, maxFail);
     auth.audit(req, 'login.fail', { entity: 'user', detail: username });
-    res.flash('error', '用户名或密码不正确。');
-    const qs = new URLSearchParams({ next, u: username }).toString();
-    return res.redirect(401, `/login?${qs}`);
+    return fail(401, '用户名或密码不正确。');
   }
   auth.clearFailures(req, username);
   req.session.regenerate((err) => {
     if (err) {
-      res.flash('error', '登录失败：' + (err?.message || '会话初始化失败'));
+      const msg = '登录失败：' + (err?.message || '会话初始化失败');
+      if (wantsJson) return res.status(500).json({ ok: false, error: msg });
+      res.flash('error', msg);
       return res.redirect('/login');
     }
     req.session.userId = Number(user.id);
     req.session.csrf = util.uid(40);
+    // 「记住我」：勾选 → 保持持久 cookie（默认 30 天，与老版一致）；
+    // 不勾选 → 改成会话 cookie（浏览器关闭即失效）。
+    // 置 null 后 express-session 的 touch()/resetMaxAge() 会一直保持 null，
+    // 序列化时不再输出 Expires，浏览器按会话 cookie 处理。
+    if (!remember) {
+      req.session.cookie.maxAge = null;
+      req.session.cookie.originalMaxAge = null;
+    }
     run('UPDATE users SET last_login_at = ? WHERE id = ?', nowStr(), user.id);
     const m = get('SELECT ledger_id FROM ledger_members WHERE user_id = ? ORDER BY id LIMIT 1', user.id);
     req.session.ledgerId = m ? Number(m.ledger_id) : null;
     auth.audit(req, 'login.success', { entity: 'user', entityId: Number(user.id) });
-    req.session.save(() => res.redirect(next));
+    req.session.save(() => {
+      if (wantsJson) return res.json({ ok: true, next });
+      res.redirect(next);
+    });
   });
 });
 

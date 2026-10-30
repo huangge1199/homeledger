@@ -15,13 +15,17 @@ function getCsrf(): string {
 interface LoginResult { ok: boolean; error?: string; redirect?: string }
 
 /**
- * 登录：POST /login，302 重定向视为成功
+ * 登录：POST /login
+ *
+ * 后端在 Accept: application/json 时直接返回 { ok: true, next } 或 { ok: false, error }；
+ * 否则退回 SSR 行为（302 重定向 + flash）。两种都兼容。
  */
-export async function login(username: string, password: string, next = '/'): Promise<LoginResult> {
+export async function login(username: string, password: string, next = '/', remember = true): Promise<LoginResult> {
   const body = new URLSearchParams()
   body.set('username', username)
   body.set('password', password)
   body.set('next', next)
+  body.set('remember', remember ? '1' : '0')
   body.set('_csrf', getCsrf())
   try {
     const res = await api.post('/login', body, {
@@ -30,18 +34,20 @@ export async function login(username: string, password: string, next = '/'): Pro
       validateStatus: (s) => s >= 200 && s < 400,
       headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'application/json' },
     })
-    if (res.status === 302 || res.status === 200) {
-      // 后端成功时 302 → next（/ 或目标页）；失败时 302/4xx 回 /login（错误信息经 flash 展示）
-      const loc = String(res.headers?.location || '')
-      if (loc.startsWith('/login')) {
-        return { ok: false, error: '用户名或密码不正确' }
-      }
-      return { ok: true }
+    // 后端 JSON 分支
+    const j = res.data
+    if (j && typeof j.ok === 'boolean') {
+      return j.ok ? { ok: true, redirect: j.next } : { ok: false, error: j.error || '登录失败' }
     }
-    return { ok: false, error: res.data?.error || '登录失败' }
+    // 兜底：SSR 重定向分支（后端未走 JSON 时）
+    const loc = String(res.headers?.location || '')
+    if (loc.startsWith('/login')) {
+      return { ok: false, error: '用户名或密码不正确。' }
+    }
+    return { ok: true }
   } catch (e: any) {
-    // 401 / 429 由后端返 JSON 或重定向
-    const msg = e?.response?.data?.error || (e?.response?.status === 401 ? '用户名或密码不正确' : e?.message) || '登录失败'
+    // 401（密码错）/ 429（尝试过多）由后端返 JSON { ok:false, error }
+    const msg = e?.response?.data?.error || (e?.response?.status === 401 ? '用户名或密码不正确。' : e?.message) || '登录失败'
     return { ok: false, error: msg }
   }
 }

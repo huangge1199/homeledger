@@ -5,7 +5,6 @@ import { NForm, NFormItem, NInput, NButton, NCheckbox, NText, NAlert } from 'nai
 import { useMessage } from 'naive-ui'
 import BlankLayout from '@/layouts/BlankLayout.vue'
 import { login as doLogin } from '@/api/auth'
-import { csrfFetch } from '@/api/csrfFetch'
 import { useSessionStore } from '@/stores/session'
 
 const router = useRouter()
@@ -21,25 +20,19 @@ const errorText = ref('')
 const needsSetup = ref(false)
 
 const next = computed(() => (route.query.next as string) || '/')
-const allowRegister = ref(false)
 
 onMounted(async () => {
-  // 拉一次 /api/v1/session 拿 csrf + 站点信息
+  // 拉一次 /api/v1/session：拿 csrf + 站点信息 + 是否开放注册（该端点未登录也可访问）
   try {
-    const s = await session.refresh()
+    await session.refresh()
     if (session.isAuthed) return router.replace(next.value)
     if (session.needsSetup) {
       needsSetup.value = true
     }
   } catch { /* ignore */ }
-  // 检测是否开放注册（站点设置）
-  try {
-    const r = await csrfFetch('/api/v1/admin/settings')
-    if (r.ok) {
-      const j = await r.json()
-      allowRegister.value = String(j?.data?.settings?.['site.allow_register']) === 'true'
-    }
-  } catch { /* 401 时 settings 拿不到，忽略 */ }
+  // 老版登录失败后回填用户名（后端 redirect 时带 ?u=username）
+  const u = route.query.u as string
+  if (u) username.value = u
 })
 
 async function onSubmit() {
@@ -50,15 +43,20 @@ async function onSubmit() {
   loading.value = true
   errorText.value = ''
   try {
-    const r = await doLogin(username.value, password.value, next.value)
-    if (r.ok) {
-      // 重新拉一次 session（cookie 已生效）
-      await session.refresh()
-      message.success('欢迎回来，' + (session.user?.displayName || username.value))
-      router.replace(next.value)
-    } else {
+    const r = await doLogin(username.value, password.value, next.value, remember.value)
+    if (!r.ok) {
       errorText.value = r.error || '登录失败'
+      return
     }
+    // 重新拉一次 session（cookie 已生效）；顺带校验是否真的登录成功 ——
+    // 后端 302 到 /login 也算「看起来成功」，但会话其实没建立
+    await session.refresh()
+    if (!session.isAuthed) {
+      errorText.value = '登录失败，请重试'
+      return
+    }
+    message.success('欢迎回来，' + (session.user?.displayName || username.value))
+    router.replace(next.value)
   } catch (e: any) {
     errorText.value = e?.message || '登录失败'
   } finally {
@@ -67,13 +65,27 @@ async function onSubmit() {
 }
 
 function goSetup() { router.push('/setup') }
-function goRegister() { router.push('/register') }
+
+/**
+ * 「注册一个」入口（老版 login.ejs 底部无条件显示）。
+ * 老版由后端 GET /register 判断：未开放注册就回到登录页并提示
+ * 「本站未开放自助注册，请联系管理员邀请你加入账本。」；
+ * 这里前端做同样判断，避免跳到占位页。
+ */
+function goRegister() {
+  if (!session.allowRegister) {
+    errorText.value = '本站未开放自助注册，请联系管理员邀请你加入账本。'
+    return
+  }
+  router.push('/register')
+}
 </script>
 
 <template>
   <BlankLayout title="登录">
     <div class="login">
-      <NText depth="3" class="sub">登录到你的家账簿</NText>
+      <h1 class="title">欢迎回来</h1>
+      <NText depth="3" class="sub">请使用你的账号密码登录</NText>
 
       <NAlert v-if="needsSetup" type="info" :show-icon="true" class="alert">
         还没创建管理员账号，<a href="javascript:" @click="goSetup">前往初始化</a>
@@ -89,7 +101,7 @@ function goRegister() { router.push('/register') }
             v-model:value="username"
             placeholder="请输入用户名"
             size="large"
-            :input-props="{ autocomplete: 'username' }"
+            :input-props="{ autocomplete: 'username', autofocus: true }"
             @keydown.enter="onSubmit"
           />
         </NFormItem>
@@ -106,10 +118,6 @@ function goRegister() { router.push('/register') }
         </NFormItem>
         <div class="row">
           <NCheckbox v-model:checked="remember">记住我</NCheckbox>
-          <NText depth="3" class="hint">
-            {{ allowRegister ? '首次使用？' : '' }}
-            <a v-if="allowRegister" href="javascript:" @click="goRegister">注册</a>
-          </NText>
         </div>
         <NButton
           type="primary"
@@ -122,7 +130,9 @@ function goRegister() { router.push('/register') }
         </NButton>
       </NForm>
 
-      <NText depth="3" class="footer">家账簿 · 自托管个人/家庭记账</NText>
+      <NText depth="3" class="footer">
+        还没有账号？<a href="javascript:" @click="goRegister">注册一个</a>
+      </NText>
     </div>
   </BlankLayout>
 </template>
@@ -131,14 +141,14 @@ function goRegister() { router.push('/register') }
 .login {
   width: 100%;
 }
-.sub { font-size: 13px; display: block; margin-bottom: 4px; }
+.title { font-size: 18px; font-weight: 600; margin: 0 0 6px; }
+.sub { font-size: 13px; display: block; margin-bottom: 16px; }
 .alert { margin: 12px 0; }
 .form { margin-top: 16px; }
 .row {
   display: flex; justify-content: space-between; align-items: center;
   margin-bottom: 16px;
 }
-.hint { font-size: 12px; }
 .footer {
   display: block;
   text-align: center;

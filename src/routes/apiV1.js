@@ -34,6 +34,10 @@ router.get('/session', (req, res) => {
     siteName: res.locals.siteName,
     baseCurrency: res.locals.baseCurrency,
     unreadCount: Number(res.locals.unreadCount || 0),
+    // 是否开放自助注册：登录页要据此显示「注册一个」入口。
+    // 该端点未登录也能访问（auth.context 对匿名用户照样放行），
+    // 所以不能走 /admin/settings（requireLogin 会返 401）。
+    allowRegister: String(require('../db').getSetting('site.allow_register', 'false')) === 'true',
   });
 });
 

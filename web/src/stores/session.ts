@@ -39,6 +39,8 @@ interface SessionState {
   baseCurrency: string
   // 通知中心未读数（侧栏徽标，老版 layout.ejs 行为）
   unreadCount: number
+  // 是否开放自助注册（登录页据此显示「注册一个」入口）
+  allowRegister: boolean
   // 当前主题（独立于 user.theme；切换立刻生效 + 写回 server）
   theme: 'light' | 'dark'
 }
@@ -56,6 +58,7 @@ export const useSessionStore = defineStore('session', {
     siteName: '家账簿',
     baseCurrency: 'CNY',
     unreadCount: 0,
+    allowRegister: false,
     theme: (localStorage.getItem('hl.theme') as 'light' | 'dark') || 'light',
   }),
   getters: {
@@ -97,6 +100,7 @@ export const useSessionStore = defineStore('session', {
             siteName: string
             baseCurrency: string
             unreadCount?: number
+            allowRegister?: boolean
           }
         }>('/session')
         const d = data.data
@@ -109,6 +113,7 @@ export const useSessionStore = defineStore('session', {
         this.siteName = d.siteName || '家账簿'
         this.baseCurrency = d.baseCurrency || 'CNY'
         this.unreadCount = Number(d.unreadCount || 0)
+        this.allowRegister = !!d.allowRegister
         // 回填 <meta name="csrf">：老版 layout.ejs / layout-blank.ejs 都会渲染该 meta，
         // 部分视图（如 SetupView 的 getCsrf）会从 DOM 读它作为兜底
         const meta = document.querySelector('meta[name="csrf"]') as HTMLMetaElement | null
