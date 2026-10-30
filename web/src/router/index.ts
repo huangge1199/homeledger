@@ -82,7 +82,7 @@ const routes: RouteRecordRaw[] = [
   { path: '/ai',             component: () => import('@/views/AiView.vue'),             meta: { title: 'AI 截图记账', icon: '🤖' } },
   { path: '/attachments',    component: () => import('@/views/AttachmentsView.vue'),    meta: { title: '账单截图', icon: '🖼️' } },
 
-  { path: '/:catch(.*)*',    component: () => import('@/views/NotFoundView.vue'),       meta: { title: '页面未找到' } },
+  { path: '/:catch(.*)*',    component: () => import('@/views/NotFoundView.vue'),       meta: { title: '页面不存在' } },
 ]
 
 export const router = createRouter({

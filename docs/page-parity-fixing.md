@@ -1179,6 +1179,25 @@ B1 第二轮修复（用户截图反馈后）：
 
 **验证**：`npm run build` **0 错误、✓ built in 55.56s**；后端 `node --check` 通过。**未启动/停止任何服务实例**。**注意**：后端 `src/routes/auth.js` 有改动，**需重启 5111 生效**。
 
+#### G6 404 页修复（2026-10-30）
+
+以老版 `d:\project\homeledger-old\src\views\error.ejs`（11 行，**通用错误页**，老版 20 处 `render('error')`：404 兜底/无权限/账本归档/邀请无效/记录或账户不存在等，套默认 `layout.ejs`）为基准，比对新版 `NotFoundView.vue`（router catchAll 接住，套 AppShell）。
+
+**结构性确认（无差异）**：新版 NotFoundView 套 AppShell 与老版 error 页套 layout.ejs 一致（均为登录后框架内展示）；后端 SPA fallback 已就位（API 未匹配返 404 JSON，其余 GET 交前端路由）。老版 error 页的通用性在 SPA 下自然消解 —— 无权限/归档/只读/邀请无效等场景已分流为 API 403/404 + 页内处理（邀请错误已在 G5 改为 join 页错误卡），新版保留 catchAll 单一 404 语义。
+
+**差异修复（4 项）**
+
+| # | 项 | 老版 | 改法 |
+|---|---|---|---|
+| 1 | **缺「返回上一页」** | `history.back()` + 「回到总览」双按钮并排 | 补 `router.back()` 朴素按钮（无历史可退时兜底回总览），双按钮并排 |
+| 2 | 图标与标题 | 😵 + h1「页面不存在」 | 对齐（router meta title 同步改「页面不存在」） |
+| 3 | message 不带路径 | 「找不到 {path}，可能是链接已失效。」 | 读 `route.path` 动态显示，等宽字体 |
+| 4 | 按钮主次 | 普通 btn（灰）+ 主色 btn | 「返回上一页」ghost 朴素样式 + 「回到总览」主色 |
+
+**有意偏离**：老版通用错误页（20 处 SSR render 调用点）不复刻为前端组件 —— SPA 下各错误场景已分流；卡片补 max-width 520px 居中（对齐老版 error 卡尺寸）。
+
+**验证**：`npm run build` **0 错误、✓ built in 43.58s**。**G6 纯前端改动，无需重启后端**。
+
 ---
 
 ### G 组｜裸页（无侧栏）
@@ -1189,8 +1208,8 @@ B1 第二轮修复（用户截图反馈后）：
 | G2 | 登录 | `login.ejs` | `LoginView.vue` | 待确认 | 见下方修复清单（4 致命/隐性 + 3 功能缺失）；**有意偏离：保留新版 NForm 控件 + 未初始化提示 + 「记住我」选项** |
 | G3 | 初始化 | `setup.ejs` | `SetupView.vue` | 待确认 | 见下方修复清单（3 致命/隐性 + 4 文案差异）；**有意偏离：保留新版已初始化提示 + 前端预校验 + 密码明文切换** |
 | G4 | 注册 | `register.ejs` | `RegisterView.vue` | 已确认 | 见下方修复清单（4 致命/隐性 + 7 功能缺失，核心为表单整体缺失）；**有意偏离：保留新版 NForm 控件 + 未开放注册提示跳转 + 前端预校验** |
-| G5 | 加入账本 | `join.ejs` | `JoinView.vue` | 待确认 | 见下方修复清单（4 致命/隐性 + 7 功能缺失，核心为前后端路由不匹配导致点邀请链接 404 + 占位页）；**有意偏离：错误改页内错误卡（老版独立 error 页）+ 保留新版 BlankLayout 品牌头** |
-| G6 | 404 | `error.ejs` | `NotFoundView.vue` | 待修 | |
+| G5 | 加入账本 | `join.ejs` | `JoinView.vue` | 已确认 | 见下方修复清单（4 致命/隐性 + 7 功能缺失，核心为前后端路由不匹配导致点邀请链接 404 + 占位页）；**有意偏离：错误改页内错误卡（老版独立 error 页）+ 保留新版 BlankLayout 品牌头** |
+| G6 | 404 | `error.ejs` | `NotFoundView.vue` | 待确认 | 见下方修复清单（4 项：双按钮/图标标题/路径文案/按钮主次）；**结构性确认：套 AppShell 与老版套 layout.ejs 一致；老版通用错误页不复刻（SPA 下已分流）** |
 | G7 | 空账本态 | `no-ledger.ejs` | 缺 | 待修 | |
 
 ---
@@ -1209,7 +1228,7 @@ B1 第二轮修复（用户截图反馈后）：
 | P3 | G1~G7 | 裸页，改动相对独立 |
 
 > A3（全局 CSRF）已随 C2 一并处理并实测通过 ✅ 已确认。
-> **P0/P1 及 P2 的 D2~D7、E1~E4 已全部完成并确认**。F 组已修 **F4（已确认）、F1（待确认）、F2（待确认）、F3（待确认）、F5（待确认）**；**F 组已全部修复完毕**。G 组已修 **G1（待确认）、G2（待确认）、G3（待确认）、G4（已确认）、G5（待确认）**；下一项按顺序为 **G6 404 页**（G7 随后）。
+> **P0/P1 及 P2 的 D2~D7、E1~E4 已全部完成并确认**。F 组已修 **F4（已确认）、F1（待确认）、F2（待确认）、F3（待确认）、F5（待确认）**；**F 组已全部修复完毕**。G 组已修 **G1（待确认）、G2（待确认）、G3（待确认）、G4（已确认）、G5（已确认）、G6（待确认）**；下一项按顺序为 **G7 空账本态**。
 
 ---
 
@@ -1256,3 +1275,4 @@ B1 第二轮修复（用户截图反馈后）：
 | 2026-10-30 | G3 | 初始化页按老版 `setup.ejs`（32 行）+ `routes/auth.js` setup 段逐项对齐 `SetupView.vue`（用户决策：全量 7 项）。后端校验与创建流程两版一致（用户名正则 / 密码 8 位 / 两次一致 → 建用户 + 默认账本 + site.name + 审计 + session regenerate），**问题集中在错误回传与文案** —— 与 G2 同源（`/setup` 当时不在 G2 范围内，本次补齐）。**3 个致命/隐性缺陷**：① **错误提示显示为 HTML 片段** —— 后端 `fail()` 是 `res.redirect(400, '/setup?...')` + flash；前端 `validateStatus` 只放行 < 400 → 400 进 catch；Express redirect 的响应体是一段 `Moved Temporarily. Redirecting to...` HTML（< 500 字符），正好命中前端「解析 HTML 错误信息（粗略）」的逻辑 → 错误提示直接显示 HTML 原文，且 SPA 读不到 flash 里的准确文案（「用户名需 3–32 位…」等）。已在后端 `POST /setup` 加与 `/login` 同款 JSON 分支（`wantsJson` → 400 校验失败 `{ok:false,error}` / 409 已初始化 / 500 会话失败 / 200 成功 `{ok:true}`），前端加 `Accept: application/json` 头、`validateStatus` 放行到 < 500、按 `j.ok` 字段统一处理，catch 读 `e.response.data.error`；② **失败后表单全部清空** —— 后端 redirect 已带 `?u=&d=&s=` 三个回填参数但前端没读（同 G2-B3），已在 `onMounted` 读 `route.query` 的 u/d/s 回填用户名/昵称/站点名（JSON 分支下前端字段本就不会丢，此处兜底 SSR 分支）；③ **hasUser 时误判成功** —— 已初始化后 POST `/setup`，后端 `res.redirect('/login')`，前端 `res.status === 302` 判定成功 → 弹「初始化完成」→ 跳 `/` 被路由守卫踢回登录页。已改为成功路径统一先 `await session.refresh()` 再判断 `session.isAuthed`（对齐 G2-A3），SSR 兜底分支识别 302 时提示「系统已存在管理员账号，请直接登录。」。**4 项文案差异**：④ 补 H1「初始化你的账本」+ 副标题「这是第一次启动，请创建管理员账号」（原只有「创建你的第一个管理员账号」）；⑤ 字段标签对齐老版（「管理员用户名 / 昵称 / 管理员密码」，原为「用户名 / 显示名称 / 密码」）；⑥ 补密码框下方 help「至少 8 位，建议同时包含字母与数字」；⑦ 站点名称补 `:maxlength="20"`、昵称 placeholder 对齐「例如：老王」。**有意偏离**：保留新版已初始化提示 + 1.5 秒延迟跳转（新版增强，G2 已修好 `needsSetup` 赋值时机）、NForm 控件与密码明文切换、前端预校验（老版纯靠后端，新版双保险）、BlankLayout 品牌头（G1 已统一）。`npm run build` 0 错误、`node --check` 通过。**注意**：后端 `src/routes/auth.js` 有改动，**需重启 5111 生效**。**待确认** |
 | 2026-10-30 | G4 | 注册页按老版 `register.ejs`（31 行）+ 老版 `routes/auth.js` register 段逐项对齐 `RegisterView.vue` + `api/auth.ts`（用户决策：全量 11 项）。新版后端与老版逻辑一致（用户名正则 / **密码 6 位** / 两次一致 / 用户名占用 → 建用户 + 默认账本 + 审计 + session regenerate），差异在**前端整个表单缺失** + 错误回传（与 G2/G3 同源）。**4 个致命/隐性缺陷**：① **注册表单完全缺失** —— RegisterView 是占位页（📝 + 「表单待补」），站点开了自助注册用户点「注册一个」进来却没有可填的表单，已整个重写为 4 字段表单（用户名/昵称/密码/确认密码）+ 前端校验 + 提交 + isAuthed 校验 + 成功提示 + 底部「直接登录」+ 未开放注册拦截（复用 SetupView 模式）；② **后端无 JSON 分支** —— `fail()` 是 `res.redirect(400, '/register?...')` + flash → SPA 拿到 HTML 片段，未开放注册时 `redirect(403, '/login')` 同样进 catch，已在后端 `POST /register` 加与 `/login`、`/setup` 同款 JSON 分支（`wantsJson` → 403 未开放 / 400 校验失败 / 500 会话失败 / 200 成功）；③ **成功后不校验 isAuthed**（同 G2-A3 / G3-A3），已改为成功路径统一 `await session.refresh()` 再判断 `session.isAuthed`，未登录提示「注册异常，请尝试手动登录」；④ **api 层传死参数** —— `register()` 传 `invite_code` 但后端根本不收（老版也不收），且无 `Accept: application/json` 头 → 后端走 SSR 分支，已删 `invite_code`、加 Accept 头、`validateStatus` 放行到 < 500、按 `j.ok` 统一处理、SSR 兜底识别 403。**7 项功能/文案补齐**：⑤ 成功提示「注册成功，已为你创建默认账本与账户。」（原为 session.flash，SPA 读不到，改前端 `message.success`）；⑥ 底部「已有账号？直接登录」链接；⑦ help 文案（用户名「3–32 位，字母、数字、下划线、点、@ 或短横线」/ 密码「至少 6 位」）；⑧ 前端预校验按 **6 位**（注册密码 6 位，区别于 setup 的 8 位）；⑨ 昵称 placeholder「例如：老王」；⑩ 未开放注册时的行为对齐老版 —— 读 `session.allowRegister`（G2 已由 /api/v1/session 下发）拦截，NAlert 提示「本站未开放自助注册，请联系管理员邀请你加入账本。」+ 1.5 秒后跳 /login（原占位页只显示「表单待补」）；⑪ `onMounted` 读 `route.query` 的 u/d 回填用户名/昵称（兜底 SSR 分支）。**表单字段口径**：老版 4 字段、无 email 输入框（后端支持存储但表单没有，恒为空，两版一致），新版对齐不加 email 框、api 层可选参数保留。**有意偏离**：保留 BlankLayout 品牌头（G1）、NForm 控件 + 密码明文切换、前端预校验双保险、未开放注册时 1.5 秒延迟跳转提示。`npm run build` 0 错误、`node --check` 通过。**注意**：后端 `src/routes/auth.js` 有改动，**需重启 5111 生效**。**待确认** |
 | 2026-10-30 | G5 | 加入账本按老版 `join.ejs`（15 行）+ 老版 `routes/auth.js` resolveInvite/join 段逐项对齐 `JoinView.vue` + `api/auth.ts` + 新版 `routes/auth.js`（用户决策：全量 11 项）。新版后端加入主链路本就完整（邀请校验/已是成员处理/回到原账本记忆/owner 角色恢复/通知成员），但**全靠 flash + redirect**（SPA 无人消费）；前端则是占位页 + **前后端路由不匹配**。**4 个致命/隐性缺陷**：① **前后端路由不匹配 → 点邀请链接 404** —— 后端 redirect 到 `/join?code=xxx&ledger=…`（query 形式），前端只注册了 `/join/:token`（路径参数），`/join` 匹配不到路由，且 JoinView 读 `params.token`、后端传 `query.code` 来源对不上，已把 GET redirect 目标改为 `/join/{code}?ledger=…`（code 进路径段对齐前端路由，query 只传 ledger/role/creator/expires）；② **JoinView 是占位页** —— 只显示邀请码 + 「确认加入表单待补」，已整体重写为完整确认页（错误卡/已成员提示/邀请信息卡 + 确认加入按钮 + 底部提示）；③ **joinLedger() 是旧 SSR 模式** —— 无 Accept 头（错误时后端 404/410 redirect 前端拿 HTML 片段；成功与「已是成员」的 302 无法区分），且传 `display_name`/`password` 死参数（老版表单只有 _csrf，后端不读），已对齐 login/register 模式：Accept 头 + `validateStatus < 500` + `j.ok` 统一处理、删死参数、返回 `alreadyMember`/`ledgerName`/`message`；④ **服务端 flash 全丢** —— 邀请无效/过期/已用/账本删除时静默回首页、「已是成员」时账本切了但没提示，已在 `resolveInvite` 加 JSON 分支（POST 时返 404/410 JSON；GET 时 redirect 回 `/join/{code}?error=…`）、GET「已是成员」redirect 回 join 页带 `?already=1`、POST 加 `wantsJson`（成功/alreadyMember 返 JSON）。**7 项功能/文案补齐**：⑤ 邀请信息卡「你被邀请以 {角色} 身份加入账本「{账本}」」+「邀请由 {创建人} 创建 · 有效期至 {日期}」（role 经 ROLE_LABEL 转中文）；⑥ 「确认加入」按钮调 `joinLedger(code)`；⑦ 底部提示「不想加入？直接关闭本页即可，邀请不会被使用。」三种状态都显示；⑧ 成功提示「已加入账本「X」，可随时在右上角切换账本」+ `session.refresh()` 同步账本上下文 + 跳首页；⑨ 「已是成员」提示（JSON `alreadyMember` → `message.info`；GET 场景 `?already=1` → 页内 NAlert「你已是账本「X」的成员，无需重复加入。」）；⑩ 未登录拦截：`onMounted` 校验 `session.isAuthed`，未登录跳 `/login?next=/join/xxx`（登录后回来继续，对齐老版 requireLogin）；⑪ 错误展示为页内 NAlert error 卡（`?error=` 回传/提交失败/缺邀请码三种来源）。**有意偏离**：错误展示改为 redirect 回 join 页带 query 由前端展示错误卡（老版渲染独立 error 页，SPA 下错误可见的最自然方式）+ 保留 BlankLayout 品牌头与 NButton；后端回到原账本/owner 恢复/通知成员等逻辑本就完整，原样保留。`npm run build` 0 错误（✓ built in 55.56s）、`node --check` 通过。**注意**：后端 `src/routes/auth.js` 有改动，**需重启 5111 生效**。**待确认** |
+| 2026-10-30 | G6 | 404 页按老版 `error.ejs`（11 行，**通用错误页**，老版 20 处 `render('error')`：404 兜底/无权限/账本归档/邀请无效/记录或账户不存在等，套默认 `layout.ejs`）逐项对齐 `NotFoundView.vue`（router catchAll 接住，用户决策：全量 4 项）。**结构性确认（无差异）**：新版套 AppShell 与老版 error 页套 layout.ejs 一致（均为登录后框架内展示）；后端 SPA fallback 已就位（API 未匹配返 404 JSON，其余 GET 交前端路由）；老版 error 页的通用性在 SPA 下自然消解 —— 无权限/归档/只读/邀请无效等场景已分流为 API 403/404 + 页内处理（邀请错误已在 G5 改为 join 页错误卡），新版保留 catchAll 单一 404 语义。**4 项差异修复**：① **补「返回上一页」按钮** —— 老版 `history.back()` + 「回到总览」双按钮并排，新版只有单按钮，已补 `router.back()` 朴素按钮（无历史可退时兜底回总览）；② 图标与标题对齐老版 404 口径 —— 😵 +「页面不存在」（原 🧭 +「页面未找到」，router meta title 同步改）；③ message 补实际路径 —— 「找不到 `{path}`，可能是链接已失效。」（读 `route.path` 动态显示，等宽字体，原固定文案无路径）；④ 按钮主次对齐 —— 「返回上一页」ghost 朴素样式 + 「回到总览」主色。**有意偏离**：老版通用错误页（20 处 SSR render 调用点）不复刻为前端组件 —— SPA 下各错误场景已分流；卡片补 max-width 520px 居中（对齐老版 error 卡尺寸）。`npm run build` 0 错误（✓ built in 43.58s）。**G6 纯前端改动，无需重启后端**。**待确认** |
