@@ -76,7 +76,8 @@ router.post('/settings/profile', auth.requireLogin, (req, res) => {
   if (!displayName) { res.flash('error', '昵称不能为空'); return res.redirect('/settings'); }
 
   // 用户名：2-24 位，字母/数字/下划线/中划线/点，全站唯一
-  if (username !== res.locals.user.username) {
+  // username 未传（局部更新）时保持原值；传了且与当前不同才视为改名
+  if (username && username !== res.locals.user.username) {
     if (!/^[A-Za-z0-9_\-.]{2,24}$/.test(username)) {
       res.flash('error', '用户名需为 2-24 位字母、数字或 _ - . 组合');
       return res.redirect('/settings');
@@ -88,7 +89,7 @@ router.post('/settings/profile', auth.requireLogin, (req, res) => {
   }
 
   run('UPDATE users SET display_name = ?, email = ?, avatar_color = ? WHERE id = ?',
-    displayName.slice(0, 30), email, color, req.session.userId);
+    displayName.slice(0, 30), email ? email.slice(0, 255) : null, color, req.session.userId);
   res.flash('success', '个人资料已更新');
   res.redirect('/settings');
 });
@@ -339,6 +340,12 @@ router.post('/ledgers/:id/delete', auth.requireLogin, (req, res) => {
   if (!l) { res.flash('error', '只有账本拥有者可以删除账本'); return res.redirect('/ledgers'); }
   if (String(req.body.confirm || '') !== l.name) {
     res.flash('error', '请准确输入账本名称以确认删除');
+    return res.redirect('/ledgers');
+  }
+  // 至少保留一个账本：删光后没有当前账本，侧栏菜单会整体消失且无法再进入账本管理页
+  const remain = get('SELECT COUNT(*) AS c FROM ledgers WHERE owner_id = ? AND id <> ?', req.session.userId, id);
+  if (Number(remain?.c || 0) < 1) {
+    res.flash('error', '至少需要保留一个账本，请先创建新账本再删除');
     return res.redirect('/ledgers');
   }
   let files = [];
@@ -604,6 +611,10 @@ router.get('/export/json', auth.requireLogin, (req, res) => {
 /** 备份：下载 SQLite 数据库文件 */
 router.get('/backup/db', auth.requireLogin, auth.requireAdmin, (req, res, next) => {
   try {
+    // VACUUM INTO 为 SQLite 专属语法；MySQL/PostgreSQL 请用数据库自带工具备份
+    if (require('../db').dialect !== 'sqlite') {
+      return res.status(400).send('当前数据库类型不支持整库备份/恢复，请使用 MySQL/PostgreSQL 自带的备份工具');
+    }
     // 用 VACUUM INTO 产出一致、紧凑的完整快照（包含 WAL 中尚未合并的写入）。
     // 直接 copyFileSync 活库文件在 WAL 模式下会缺最近写入，-wal 又不会随 .db 一起被下载。
     const target = path.join(DATA_DIR, `backup-${todayStr()}-${Date.now()}.db`);
@@ -629,6 +640,9 @@ router.post('/backup/restore', auth.requireLogin, auth.requireAdmin, (req, res) 
     return res.redirect('/export');
   };
   try {
+    if (require('../db').dialect !== 'sqlite') {
+      return done(false, '当前数据库类型不支持整库备份/恢复，请使用 MySQL/PostgreSQL 自带的备份工具');
+    }
     const m = /^data:.*?;base64,(.+)$/s.exec(String(req.body.dataUrl || ''));
     if (!m) return done(false, '请选择 .db 数据库文件');
     const buf = Buffer.from(m[1], 'base64');
@@ -759,7 +773,8 @@ router.post('/admin/users/:id', auth.requireLogin, auth.requireAdmin, (req, res)
       // 吊销令牌并清掉站内通知：软删后令牌仍能通过 users JOIN 生效，必须显式吊销
       run('UPDATE api_tokens SET revoked_at = ? WHERE user_id = ?', nowStr(), id);
       run('DELETE FROM notifications WHERE user_id = ?', id);
-      run("UPDATE users SET status = 'disabled', username = username || '_deleted_' || id WHERE id = ?", id);
+      // 用户名改为「原名_deleted_id」避免占用；拼接在 JS 侧完成，保证三种数据库通用
+      run("UPDATE users SET status = 'disabled', username = ? WHERE id = ?", `${user.username}_deleted_${id}`, id);
       if (String(req.body.hard || '') === '1') run('DELETE FROM users WHERE id = ?', id);
       res.flash('success', '用户已删除（其名下账本已转交或清理）');
       break;

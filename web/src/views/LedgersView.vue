@@ -176,8 +176,22 @@ function openDelete(l: any) {
   deleteOpen.value = true
 }
 
+/** 我拥有的账本数（owner 才有删除权，校验也以此为准） */
+const myOwnedLedgerCount = computed(
+  () => items.value.filter((l: any) => l.role === 'owner').length,
+)
+
+/** 是否是最后一个账本：删掉后没有当前账本，侧栏菜单会整体消失 */
+const isLastOwnLedger = computed(
+  () => !!deleteTarget.value && myOwnedLedgerCount.value <= 1,
+)
+
 async function onDelete() {
   if (!deleteTarget.value) return
+  if (isLastOwnLedger.value) {
+    message.warning('至少需要保留一个账本，请先创建新账本再删除')
+    return
+  }
   if (deleteConfirm.value !== deleteTarget.value.name) {
     message.warning('请准确输入账本名称以确认删除')
     return
@@ -402,6 +416,9 @@ function kindLabel(kind: string) {
             <li>成员关系</li>
           </ul>
         </NAlert>
+        <NAlert v-if="isLastOwnLedger" type="warning" :show-icon="true" class="alert" style="margin-top: 12px">
+          这是你最后一个账本，删除后将没有可用账本（侧栏菜单会消失），请先创建新账本。
+        </NAlert>
         <NForm label-placement="top" :model="{ name: deleteConfirm }" style="margin-top: 12px">
           <NFormItem :label="`请输入账本名称「${deleteTarget?.name}」以确认`">
             <NInput v-model:value="deleteConfirm" placeholder="账本名称" />
@@ -412,7 +429,7 @@ function kindLabel(kind: string) {
             <NButton @click="deleteOpen = false">取消</NButton>
             <NButton
               type="error"
-              :disabled="deleteConfirm !== deleteTarget?.name"
+              :disabled="deleteConfirm !== deleteTarget?.name || isLastOwnLedger"
               @click="onDelete"
             >
               🗑️ 永久删除
