@@ -450,13 +450,19 @@ router.post('/api/import/preview', auth.requireLogin, auth.requireLedgerWrite, (
       }
       return kind === 'income' ? '其他收入/其他收入' : '其他支出/其他';
     };
-    const sample = parsed.records.slice(0, 200).map((r, idx) => ({
-      ...r,
-      idx,
-      type_label: require('../db').TXN_TYPE_MAP[r.type]?.label || r.type,
-      guess_category: guessCat(r),
-      guess_account: r.account_hint || '—',
-    }));
+    // 预览按「日期 + 时刻」倒序展示；idx 仍指向原始 records 顺序，保证逐条改账本提交不串行
+    const timeKey = (r) => `${r.txn_date || ''}T${r.txn_time || ''}`;
+    const sample = parsed.records
+      .map((r, idx) => ({ r, idx }))
+      .sort((a, b) => timeKey(b.r).localeCompare(timeKey(a.r)))
+      .slice(0, 200)
+      .map(({ r, idx }) => ({
+        ...r,
+        idx,
+        type_label: require('../db').TXN_TYPE_MAP[r.type]?.label || r.type,
+        guess_category: guessCat(r),
+        guess_account: r.account_hint || '—',
+      }));
 
     const stat = { income: 0, expense: 0, transfer: 0, minDate: null, maxDate: null };
     for (const r of parsed.records) {
@@ -467,13 +473,17 @@ router.post('/api/import/preview', auth.requireLogin, auth.requireLedgerWrite, (
       if (!stat.maxDate || r.txn_date > stat.maxDate) stat.maxDate = r.txn_date;
     }
 
-    const neutralSample = (parsed.neutralRecords || []).slice(0, 20).map((r, i) => ({
-      ...r,
-      idx: parsed.records.length + i,
-      type_label: require('../db').TXN_TYPE_MAP[r.type]?.label || r.type,
-      guess_category: guessCat(r),
-      guess_account: r.account_hint || '—',
-    }));
+    const neutralSample = (parsed.neutralRecords || [])
+      .map((r, i) => ({ r, i }))
+      .sort((a, b) => timeKey(b.r).localeCompare(timeKey(a.r)))
+      .slice(0, 20)
+      .map(({ r, i }) => ({
+        ...r,
+        idx: parsed.records.length + i,
+        type_label: require('../db').TXN_TYPE_MAP[r.type]?.label || r.type,
+        guess_category: guessCat(r),
+        guess_account: r.account_hint || '—',
+      }));
 
     // 逐条改记账本用：用户可写的账本列表（家庭账单拆记到家庭/个人账本）
     const myLedgers = (res.locals.ledgers || [])

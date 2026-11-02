@@ -135,6 +135,7 @@ function onReset() {
 
 const sampleColumns = computed<DataTableColumns>(() => [
   { title: '日期', key: 'txn_date', width: 100 },
+  { title: '时间', key: 'txn_time', width: 90, render: (r: any) => r.txn_time || '-' },
   { title: '类型', key: 'type_label', width: 80 },
   {
     title: '金额',
@@ -172,6 +173,7 @@ const sampleColumns = computed<DataTableColumns>(() => [
 
 const neutralColumns = computed<DataTableColumns>(() => [
   { title: '日期', key: 'txn_date', width: 100 },
+  { title: '时间', key: 'txn_time', width: 90, render: (r: any) => r.txn_time || '-' },
   {
     title: '金额',
     key: 'amount_cents',
@@ -372,7 +374,7 @@ const jobColumns = computed<DataTableColumns>(() => [
             :bordered="true"
             size="small"
             :max-height="500"
-            :scroll-x="1120"
+            :scroll-x="1210"
           />
 
           <NDivider />
