@@ -46,6 +46,8 @@ EXPOSE 5111
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
   CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||5111)+'/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
-# 优先读工作目录下的 .env（compose 会通过 env_file 把 .env 挂进来，
-# 直接 docker run 时也可用 -v ./.env:/app/.env 注入配置）
+# 环境变量来源（两条路同时生效，互不冲突）：
+#   1. docker compose env_file：把 .env 内容注入进程环境
+#   2. compose volume 挂载 .env 到 /app/.env + Node --env-file 再读一遍（兜底）
+# 两者读的是同一个文件，值相同，不会冲突
 CMD ["node", "--no-warnings", "--env-file=.env", "server.js"]

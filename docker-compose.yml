@@ -28,6 +28,9 @@ services:
       # 飞牛 NAS：把左侧换成你自己的共享文件夹路径，例如
       #   /vol1/1000/docker/homeledger/data
       - ./data:/data
+      # 把 .env 文件挂进容器（只读，避免容器内误改）
+      # 这样 Node 的 --env-file=.env 能读到，同时 compose env_file 也在进程环境里，双保险
+      - ./.env:/app/.env:ro
 
   # 可选：MySQL 存储后端（启用时把 homeledger 的 DB_MYSQL_ENABLE 改为 "true"）
   # mysql:
