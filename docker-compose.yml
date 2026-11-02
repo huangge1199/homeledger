@@ -9,31 +9,21 @@ services:
     ports:
       # 左侧是 NAS 上的访问端口，冲突可改；右侧保持 5111
       - "15111:5111"
+    # 读取项目根目录 .env 文件：所有 DB_* / SESSION_SECRET / ADMIN_* 等变量
+    # 写在 .env 里会自动注入容器进程环境（飞牛 NAS / Portainer / 命令行通用）
+    # compose 根目录 .env 文件**仅用于变量展开**，不会自动注入容器，必须显式加 env_file
+    env_file:
+      - .env
     environment:
       TZ: Asia/Shanghai
       PORT: "5111"
       DATA_DIR: /data
-      # 支持在命令行直接覆盖，不用编辑本文件：
+      # 下方三个在 environment 里显式列出，既支持 .env 注入也支持命令行覆盖：
       #   SESSION_SECRET=$(openssl rand -hex 32) ADMIN_PASSWORD=你的密码 docker compose up -d
       SESSION_SECRET: "${SESSION_SECRET:-please-change-this-session-secret}"
       # 首次启动自动创建管理员（仅当库中还没有任何用户时生效）
       ADMIN_USER: "${ADMIN_USER:-admin}"
       ADMIN_PASSWORD: "${ADMIN_PASSWORD:-admin888}"
-      # —— 数据库三选一（都不配置时默认 SQLite）——
-      # 启用 MySQL/PostgreSQL 时：取消下方对应服务注释、这里改 ENABLE 并填连接信息
-      # DB_SQLITE_ENABLE: "true"
-      # DB_MYSQL_ENABLE: "false"
-      # DB_MYSQL_HOST: mysql
-      # DB_MYSQL_PORT: "3306"
-      # DB_MYSQL_USER: homeledger
-      # DB_MYSQL_PASSWORD: homeledger-pass
-      # DB_MYSQL_DATABASE: homeledger
-      # DB_POSTGRES_ENABLE: "false"
-      # DB_POSTGRES_HOST: postgres
-      # DB_POSTGRES_PORT: "5432"
-      # DB_POSTGRES_USER: homeledger
-      # DB_POSTGRES_PASSWORD: homeledger-pass
-      # DB_POSTGRES_DATABASE: homeledger
     volumes:
       # 飞牛 NAS：把左侧换成你自己的共享文件夹路径，例如
       #   /vol1/1000/docker/homeledger/data
