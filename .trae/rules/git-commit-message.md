@@ -5,13 +5,14 @@ scene: git_message
 
 Write your rules here to customize the style of AI-generated commit messages.
 严格遵循以下格式：
-<type>（<范围>）: <简短描述>
+<版本号>：<type>（<范围>）: <简短描述>
 
 1、<改动点一>
 2、<改动点二>
 3、<改动点三>
 
 要求：
+- 版本号为数字，格式为 vX.X.X，例如 v2.0.0
 - type 使用 feat / fix / docs / style / refactor / perf / test / chore 等
 - 范围写功能模块或页面名称，使用中文
 - 标题一句话概括，不超过 50 字
