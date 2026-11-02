@@ -1,19 +1,30 @@
-# 📒 家账簿 HomeLedger（v2.0 · Vue 3 SPA 重构版）
+# 📒 家账簿 HomeLedger（v3.0 · 多数据库存储版）
 
 > **本仓库是 [Panda-995/homeledger](https://github.com/Panda-995/homeledger) 的 fork**，在其 v1.8.0 基础上完成了一次彻底的架构重构。
 >
 > 血缘关系：
-> `sucraft-hub/homeledger`（原作者 @蘇先生，v1.0 首发）→ `Panda-995/homeledger`（v1.x 持续增强：UI/UX 重做、移动端适配、开放 API 全量开放）→ **本仓库**（v2.0：前端整体重写为 Vue 3 + Naive UI 单页应用）
+> `sucraft-hub/homeledger`（原作者 @蘇先生，v1.0 首发）→ `Panda-995/homeledger`（v1.x 持续增强：UI/UX 重做、移动端适配、开放 API 全量开放）→ **本仓库**（v2.0：前端整体重写为 Vue 3 + Naive UI 单页应用；v3.0：存储层支持 SQLite / MySQL / PostgreSQL 三选一）
 
 **自托管的家庭记账系统**：网页手动记账 + AI 截图/文本自动记账 + 开放 API 对接聊天机器人（Hermes / OpenClaw 等），所有账目数据都留在你自己的 NAS / 服务器上。
 
-- 数据存储：SQLite 单文件（Node 内置 `node:sqlite`，零原生依赖）
+- 数据存储：**SQLite / MySQL / PostgreSQL 三选一**（`.env` 中 `DB_*_ENABLE=true` 决定用哪个，SQLite 仍为零原生依赖）
 - 前端：Vue 3.5 + TypeScript + Naive UI + Pinia + ECharts（独立 Vite 工作区 `web/`）
 - 后端：Node 22 + Express 4，只提供 JSON API 与静态资源，**不再做服务端渲染**
 
 ---
 
 ## ✨ 本 fork 的增强（相对上游 v1.8.0）
+
+### 🗄️ 存储层重构（v3.0.0，2026-11）
+
+- **三种关系型数据库任选**：SQLite / MySQL 8+ / PostgreSQL 12+ 三选一，由 `.env` 中的 `DB_SQLITE_ENABLE` / `DB_MYSQL_ENABLE` / `DB_POSTGRES_ENABLE` 决定（值为 `true` 生效，多个同时启用会直接报错拒绝启动，全不启用时回落 SQLite）
+- **业务代码零改动**：新增 `src/db/` 存储抽象层，`src/db.js` 仍是唯一入口，对外 API 与 200+ 处调用点完全不变
+- **同步桥接**：`mysql2` / `pg` 均为异步驱动，而本项目全代码库是同步调用，故用 `worker_threads` + `SharedArrayBuffer` + `Atomics.wait` 在后台线程执行远程查询，主线程同步等待结果，对业务层透明
+- **方言翻译层**：`src/db/translate.js` 统一处理三方言差异（`ON CONFLICT` → `ON DUPLICATE KEY UPDATE` / `INSERT IGNORE`、`?` → `$n`、`LIKE` → `ILIKE`、`GROUP_CONCAT` → `string_agg` / `SEPARATOR`、`CAST AS CHAR` → `AS TEXT` 等）
+- **全库 SQL 归一化**：清理 SQLite 专有语法（`strftime()` / `date()` / `IFNULL` / `||` 拼接 / `INSERT OR IGNORE` / `AUTOINCREMENT` / `PRAGMA`），并按 MySQL 严格模式（`only_full_group_by`、列宽校验、保留字）逐项加固
+- **建表与迁移统一**：`src/db/schema.js` 收敛 21 张表的 DDL 与增量迁移，按方言转换后幂等执行
+- **批量写入能力**：新增 `db.runBatch(sql, rows)`，远程驱动下一次往返写多行，大批量导入性能提升约 88 倍
+- **备份/恢复**：整库备份基于 SQLite 文件，仅 SQLite 模式可用；MySQL / PostgreSQL 下接口明确提示改用数据库自带工具
 
 ### 🏗️ 架构重构（v2.0.0，2026-10）
 
@@ -73,10 +84,23 @@ cp .env.example .env
 #   本地运行请把 DATA_DIR 改成 ./data（容器内才用 /data）
 #   SESSION_SECRET 建议改成随机长字符串：openssl rand -hex 32
 
-# 3. 构建前端（产物在 web/dist）
+# 3. 选择存储后端（三选一，默认 SQLite）
+#   SQLite（零依赖，数据文件在 DATA_DIR）：
+#     DB_SQLITE_ENABLE=true
+#   MySQL：
+#     DB_MYSQL_ENABLE=true
+#     DB_MYSQL_HOST=127.0.0.1  DB_MYSQL_PORT=3306
+#     DB_MYSQL_USER=homeledger  DB_MYSQL_PASSWORD=xxx  DB_MYSQL_DATABASE=homeledger
+#   PostgreSQL：
+#     DB_POSTGRES_ENABLE=true
+#     DB_POSTGRES_HOST=127.0.0.1  DB_POSTGRES_PORT=5432
+#     DB_POSTGRES_USER=homeledger  DB_POSTGRES_PASSWORD=xxx  DB_POSTGRES_DATABASE=homeledger
+#   注意：同时启用多个会直接报错拒绝启动；MySQL / PG 需先自建数据库（字符集建议 utf8mb4）
+
+# 4. 构建前端（产物在 web/dist）
 cd web && npm install && npm run build && cd ..
 
-# 4. 启动
+# 5. 启动
 npm start          # http://localhost:5111
 ```
 
@@ -107,9 +131,24 @@ services:
       ADMIN_USER: "${ADMIN_USER:-admin}"
       ADMIN_PASSWORD: "${ADMIN_PASSWORD:-admin888}"
       ALLOW_REGISTER: "${ALLOW_REGISTER:-false}"
+      # 数据库三选一（都不配置时默认 SQLite）
+      # DB_MYSQL_ENABLE: "true"
+      # DB_MYSQL_HOST: mysql
+      # DB_MYSQL_PORT: "3306"
+      # DB_MYSQL_USER: homeledger
+      # DB_MYSQL_PASSWORD: homeledger-pass
+      # DB_MYSQL_DATABASE: homeledger
+      # DB_POSTGRES_ENABLE: "true"
+      # DB_POSTGRES_HOST: postgres
+      # DB_POSTGRES_PORT: "5432"
+      # DB_POSTGRES_USER: homeledger
+      # DB_POSTGRES_PASSWORD: homeledger-pass
+      # DB_POSTGRES_DATABASE: homeledger
     volumes:
       - ./data:/data
 ```
+
+用 MySQL / PostgreSQL 时，仓库的 `docker-compose.yml` 末尾已备好注释掉的 `mysql:8.4` 与 `postgres:16-alpine` 服务，启用对应服务并把上面的 `DB_*_ENABLE` 改为 `"true"` 即可。
 
 ```bash
 docker compose up -d --build
@@ -129,7 +168,7 @@ docker compose up -d --build
 |---|---|
 | 前端 | Vue 3.5 + TypeScript 5.6 + Vite 5 + vue-router 4 + Pinia 3 + Naive UI 2.40 + ECharts 5 + axios + dayjs |
 | 后端 | Node.js 22 + Express 4 + express-session |
-| 存储 | SQLite（Node 内置 `node:sqlite`，零原生依赖） |
+| 存储 | SQLite（Node 内置 `node:sqlite`，零原生依赖）/ MySQL 8+ / PostgreSQL 12+，`.env` 三选一 |
 | 认证 | Cookie 会话 + CSRF（`X-CSRF-Token` header 或 `body._csrf`） |
 | AI（可选） | OpenAI 兼容接口（智谱 GLM / 通义 / DeepSeek / 本地 Ollama 均可） |
 
@@ -141,7 +180,13 @@ docker compose up -d --build
 homeledger/
 ├── server.js              # 服务入口：静态托管 + API 挂载 + SPA fallback
 ├── src/
-│   ├── db.js              # 数据层：建表 / 迁移 / 种子 / 余额重算引擎
+│   ├── db.js              # 数据层统一入口：方言选择 / 建表 / 迁移 / 种子 / 余额重算
+│   ├── db/                # 存储抽象层
+│   │   ├── schema.js      #   21 张表 DDL + 增量迁移清单（单一方言源）
+│   │   ├── sqlite.js      #   SQLite 驱动（node:sqlite）
+│   │   ├── remote.js      #   MySQL / PG 同步桥接（主线程侧）
+│   │   ├── worker.js      #   MySQL / PG 后台线程（连接池 / 事务 / 建表）
+│   │   └── translate.js   #   方言翻译（MySQL / PG 差异归一）
 │   ├── lib/               # 鉴权、AI、附件、导入、定时任务等
 │   └── routes/            # api.v1.* 业务子模块 + 遗留 SSR 兼容端点
 ├── web/                   # 前端独立工作区（Vite）
@@ -154,7 +199,7 @@ homeledger/
 │       ├── theme/         # 设计令牌 + Naive 主题覆盖
 │       └── views/         # 30 个业务视图
 ├── scripts/               # 演示数据、密码重置等辅助脚本
-├── docs/                  # 迁移计划、API 文档、部署与对等修复记录
+├── docs/                  # 迁移计划、API 文档、部署与对等修复记录、测试报告
 └── skills/                # Hermes / OpenClaw 技能包
 ```
 
@@ -182,7 +227,7 @@ AI 截图/文本识别使用 OpenAI 兼容接口，在「设置 → AI 记账」
 
 ## 🔒 安全说明
 
-- 所有数据存放在 `DATA_DIR`（默认项目内 `data/`，容器内 `/data`），备份 = 拷贝该目录
+- SQLite 模式下所有数据存放在 `DATA_DIR`（默认项目内 `data/`，容器内 `/data`），备份 = 拷贝该目录；MySQL / PostgreSQL 模式请用数据库自带的备份工具
 - 开放 API 令牌只存 SHA-256 摘要，可随时吊销；权限跟随账本成员关系；写操作全量审计
 - 建议仅在局域网/VPN 内暴露端口；如需公网访问，请置于反向代理之后并启用 HTTPS
 
@@ -199,6 +244,25 @@ AI 截图/文本识别使用 OpenAI 兼容接口，在「设置 → AI 记账」
 ---
 
 ## 📦 更新记录
+
+### v3.0.0（2026-11-02 多数据库存储改造）
+
+- 🗄️ **存储层支持 SQLite / MySQL 8+ / PostgreSQL 12+ 三选一**，由 `.env` 的 `DB_SQLITE_ENABLE` / `DB_MYSQL_ENABLE` / `DB_POSTGRES_ENABLE` 决定（值为 `true` 生效；多个同时启用直接报错拒绝启动；全不启用回落 SQLite）
+- 🏗️ 新增 `src/db/` 存储抽象层：`schema.js`（21 张表 DDL + 增量迁移）、`sqlite.js`（SQLite 驱动）、`remote.js` + `worker.js`（MySQL / PG 同步桥接）、`translate.js`（方言翻译）；`src/db.js` 保持唯一入口，**业务代码与对外 API 零改动**
+- ⚡ 基于 `worker_threads` + `SharedArrayBuffer` + `Atomics.wait` 实现同步桥接，规避 `mysql2` / `pg` 异步驱动与全代码库同步调用的冲突
+- 🔧 方言翻译层统一处理三方言差异：`ON CONFLICT` → `ON DUPLICATE KEY UPDATE` / `INSERT IGNORE`、`?` → `$n`、`LIKE` → `ILIKE`、`GROUP_CONCAT` → `string_agg` / `SEPARATOR`、`CAST AS CHAR` → `AS TEXT`、`AUTOINCREMENT` → `AUTO_INCREMENT` / `BIGSERIAL`
+- 🧹 全库 SQL 归一化，清理 SQLite 专有语法：`strftime()` / `date()` / `IFNULL` / `||` 拼接 / `INSERT OR IGNORE` / `AUTOINCREMENT` / `PRAGMA`
+- 🐛 修复 MySQL 下 `||` 被当作逻辑或导致的**静默数据错误**（日期区间筛选返回错结果、删除用户后用户名被写成 `0`），改用 `CONCAT()` 与应用层拼接
+- 🐛 修复 MySQL `only_full_group_by` 严格模式下 3 处 GROUP BY 缺非聚合列导致的查询报错
+- 🐛 修复 MySQL 保留字 `key`（settings 表）、`out`（别名）导致的建表与查询语法错误
+- 🐛 修复 `VARCHAR` 列宽过窄（`password_hash` 实际 179 字符超 `VARCHAR(128)`）与 `INTEGER` 存毫秒时间戳溢出 32 位（`avatar_ver` 改 `BIGINT`）
+- 🐛 修复局部更新个人资料被误判为改名（只传昵称 / 邮箱时返回 400）
+- ⚡ 新增 `db.runBatch(sql, rows)` 批量写入能力 + 分类 / 账户查询缓存 + 导入改为先解析后批量落库：MySQL 下 1466 笔导入从 **89.5 秒 → 1.0 秒**，SQL 调用 1002 → 9 次
+- ⚡ 导入接口前端超时单独放宽至 300 秒（原 30 秒会误报超时）
+- 🐛 修复导出 CSV 缺失时间列，且回导无法还原 `txn_time`（新增独立「时间」列 + `timeColumnIndex()` 精确取列，避免误抓支付宝账单的「交易时间」列）
+- 🛡️ 删除账本新增「至少保留一个」校验（后端拦截 + 前端提示并禁用按钮），避免删光账本后侧栏菜单整体消失
+- 📄 新增测试报告 [`docs/testing-report.md`](docs/testing-report.md)：SQLite 137/137、MySQL 136/136 全量 API 用例通过，PostgreSQL 方言静态审查零残留，两库交叉一致性完全一致
+- 📦 新增依赖 `mysql2`、`pg`；`docker-compose.yml` 备好注释掉的 `mysql:8.4` 与 `postgres:16-alpine` 服务
 
 ### v2.0.0（2026-10-16 重构启动，2026-11-02 收尾）
 

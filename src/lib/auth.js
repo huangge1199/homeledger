@@ -86,7 +86,7 @@ function audit(req, action, { entity = null, entityId = null, detail = null, led
       ledgerId ?? req?.session?.ledgerId ?? null,
       action, entity, entityId,
       detail ? String(detail).slice(0, 500) : null,
-      req?.ip || req?.headers?.['x-forwarded-for'] || null,
+      String(req?.ip || req?.headers?.['x-forwarded-for'] || '').slice(0, 64) || null,
       (req?.headers?.['user-agent'] || '').slice(0, 200),
       nowStr()
     );
@@ -275,7 +275,9 @@ function safeBack(ref) {
 function notify(userId, { kind = 'info', title, body = null, link = null, ledgerId = null }) {
   run(
     'INSERT INTO notifications (user_id, ledger_id, kind, title, body, link, created_at) VALUES (?,?,?,?,?,?,?)',
-    userId, ledgerId, kind, title, body, link, nowStr()
+    userId, ledgerId, kind, String(title || '').slice(0, 255),
+    body ? String(body).slice(0, 2000) : null,
+    link ? String(link).slice(0, 255) : null, nowStr()
   );
 }
 
@@ -286,7 +288,7 @@ function notify(userId, { kind = 'info', title, body = null, link = null, ledger
  */
 function alreadyNotified(dedupeKey) {
   if (!dedupeKey) return false;
-  return !!get("SELECT id FROM notifications WHERE body LIKE '%' || ? || '%' LIMIT 1", dedupeKey);
+  return !!get('SELECT id FROM notifications WHERE body LIKE ? LIMIT 1', `%${dedupeKey}%`);
 }
 
 /** 账本内所有可写成员（用于通知与成员统计） */

@@ -7,9 +7,9 @@
  * 自动识别编码、自动映射分类与账户、自动去重
  */
 const zlib = require('node:zlib');
-const { all, get, run, tx, nowStr, todayStr, recalcBalances } = require('../db');
+const { all, get, run, runBatch, tx, nowStr, todayStr, recalcBalances } = require('../db');
 const { parseAmountToCents } = require('./util');
-const { classifyByKeywords, guessAccountName, resolveCategoryId, resolveAccountId } = require('./ai');
+const { classifyByKeywords, guessAccountName, resolveCategoryId, resolveAccountId, clearResolveCache, invalidateAccountCache } = require('./ai');
 
 /* ------------------------------- xlsx（零依赖） ------------------------------- */
 
@@ -169,6 +169,16 @@ function headerIndex(header, candidates) {
   return -1;
 }
 
+/**
+ * 独立时间列的索引：只认表头恰好是「时间」的列。
+ * 不能用 headerIndex(['时间'])——它的模糊匹配会把支付宝账单的「交易时间」列也抓进来，
+ * 而那一列是日期+时间的完整时间戳，再单独取时间就重复了。
+ */
+function timeColumnIndex(header) {
+  const i = header.findIndex((h) => h === '时间' || h === 'time' || h === 'Time');
+  return i >= 0 ? i : -1;
+}
+
 function detectSource(headerLine, fullText) {
   const h = headerLine.join(',');
   if (h.includes('交易分类') || /支付宝/.test(fullText.slice(0, 2000))) return 'alipay';
@@ -190,7 +200,7 @@ function extractTime(v) {
   return m ? `${m[1]}:${m[2]}:${m[3] || '00'}` : null;
 }
 
-function normalizeRow({ date, direction, amountText, merchant, desc, categoryText, accountText, status, orderNo, typeKey }) {
+function normalizeRow({ date, time, direction, amountText, merchant, desc, categoryText, accountText, status, orderNo, typeKey }) {
   const amountCents = parseAmountToCents(amountText);
   const dir = String(direction || '').trim();
   let type = 'expense';
@@ -215,7 +225,8 @@ function normalizeRow({ date, direction, amountText, merchant, desc, categoryTex
     type,
     amount_cents: amountCents,
     txn_date: normalizeDate(date),
-    txn_time: extractTime(date),
+    // 独立时间列优先；没有就从日期列里抠（支付宝/微信账单的时间混在日期列里）
+    txn_time: extractTime(time) || extractTime(date),
     merchant: (merchant || desc || '').slice(0, 60) || null,
     note: [categoryText, desc, status].filter(Boolean).join(' · ').slice(0, 200) || null,
     category_hint: categoryText || null,
@@ -258,7 +269,9 @@ function parseBill(buffer) {
   const source = detectSource(header, text);
   const body = rows.slice(headerIdx + 1).filter((r) => r.length > 2 && r.join('').replace(/[-,\s]/g, '').length > 0);
 
-  const iDate = headerIndex(header, ['交易时间', '交易日期', '日期', '时间', 'date']);
+  const iDate = headerIndex(header, ['交易时间', '交易日期', '日期', 'date']);
+  // 家账簿自己导出的 CSV 有独立的「时间」列；支付宝/微信账单的时间混在日期列里
+  const iTime = timeColumnIndex(header);
   const iDir = headerIndex(header, ['收/支', '收支', '类型', '方向']);
   const iAmount = headerIndex(header, ['金额(元)', '金额', 'amount']);
   const iMerchant = headerIndex(header, ['交易对方', '对方', 'merchant', '商家']);
@@ -277,6 +290,7 @@ function parseBill(buffer) {
     if (status && SKIP_STATUS.test(status)) { skipped++; continue; }
     const norm = normalizeRow({
       date: iDate >= 0 ? r[iDate] : '',
+      time: iTime >= 0 ? r[iTime] : '',
       direction: iDir >= 0 ? r[iDir] : '',
       amountText: iAmount >= 0 ? r[iAmount] : '',
       merchant: iMerchant >= 0 ? r[iMerchant] : '',
@@ -312,6 +326,8 @@ function ensureAccount(ledgerId, name, createdList) {
     ledgerId, n.slice(0, 30), type, icon, 'CNY', '由账单导入自动创建', nowStr()
   );
   createdList.push(n);
+  // 新建的账户要让缓存失效，否则同一批后续记录会再查一次库并重复创建
+  invalidateAccountCache(ledgerId);
   return r.lastInsertRowid;
 }
 
@@ -358,6 +374,9 @@ function importRecords({
         else { fullSet.add(`${base}|`); timelessPrefixes.add(base); }
       }
 
+      // 逐条解析出待插入的行，最后统一批量落库：
+      // 远程驱动下逐条插入意味着每条一次跨线程往返，上千条会直接超时
+      const pending = [];
       for (const rec of recs) {
         try {
           // 指纹金额必须与入库值一致：expense/income 入库时钳回正数，负金额记录（如 -0.01 退款）
@@ -399,16 +418,12 @@ function importRecords({
             if (!categoryId && kw) categoryId = resolveCategoryId(lid, kw.category, kw.kind === 'income' ? 'income' : kind);
             if (!categoryId) categoryId = resolveCategoryId(lid, kind === 'income' ? '其他收入' : '其他支出', kind);
           }
-          run(
-            `INSERT INTO transactions
-             (ledger_id, type, amount_cents, currency, rate, amount_base_cents, account_id, to_account_id, category_id,
-              user_id, txn_date, txn_time, note, merchant, status, source, ai_json, created_at, updated_at)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          pending.push([
             lid, rec.type, signedAmount, 'CNY', 1, signedAmount,
             accountId, toAccountId, categoryId, userId, rec.txn_date, rec.txn_time, rec.note, rec.merchant,
             'cleared', 'import', JSON.stringify({ source, order_no: rec.order_no, neutral: !!rec.neutral }),
-            nowStr(), nowStr()
-          );
+            nowStr(), nowStr(),
+          ]);
           fullSet.add(fp);
           (rec.txn_time ? timedPrefixes : timelessPrefixes).add(base);
           imported++;
@@ -417,17 +432,35 @@ function importRecords({
           failed++;
         }
       }
+
+      // 批量落库：一次多值 INSERT 写完整批，失败时退回逐条插入以定位坏数据
+      if (pending.length) {
+        const INSERT_SQL = `INSERT INTO transactions
+             (ledger_id, type, amount_cents, currency, rate, amount_base_cents, account_id, to_account_id, category_id,
+              user_id, txn_date, txn_time, note, merchant, status, source, ai_json, created_at, updated_at)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`;
+        try {
+          runBatch(INSERT_SQL, pending);
+        } catch {
+          for (const row of pending) {
+            try { run(INSERT_SQL, ...row); } catch { failed++; }
+          }
+        }
+      }
     }
   });
 
   // 导入是直接写表，必须重算账户余额，否则余额与流水不一致（涉及到的每个账本都要）
   for (const lid of Object.keys(importedPerLedger)) recalcBalances(Number(lid));
 
+  // 分类/账户查询缓存只在导入批次内有效（期间新建了账户），批次结束必须清空
+  clearResolveCache();
+
   const otherLedgers = Object.entries(importedPerLedger).filter(([lid]) => Number(lid) !== Number(ledgerId));
   const job = run(
     `INSERT INTO import_jobs (ledger_id, user_id, source, file_name, total, imported, skipped, failed, status, message, created_at)
      VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
-    ledgerId, userId, source, fileName, list.length, imported, skipped, failed, 'done',
+    ledgerId, userId, source, String(fileName || '').slice(0, 255), list.length, imported, skipped, failed, 'done',
     (createdAccounts.length ? `自动创建账户：${createdAccounts.join('、')}` : null)
       || (otherLedgers.length ? `另有 ${otherLedgers.reduce((s, [, n]) => s + n, 0)} 笔记入其他账本` : null),
     nowStr()
@@ -451,15 +484,25 @@ function toCsv(header, rows) {
   return '\uFEFF' + lines.join('\r\n') + '\r\n';
 }
 
-// 第二列「类型」是人读中文 label，第十六列 type_key 是机读枚举（回导时优先用它精确还原类型）
-const EXPORT_HEADER = ['日期', '类型', '金额', '币种', '折算金额', '分类', '账户', '转入账户', '成员', '商家', '备注', '标签', '来源', '状态', '备注2', 'type_key'];
+// 导出表头：
+//   「时间」列紧跟「日期」，让回导能还原 txn_time（否则导出的账单只有日期没有时刻）
+//   「类型」列是给人读的中文 label，末列 type_key 是机读枚举（回导时优先用它精确还原类型）
+const EXPORT_HEADER = ['日期', '时间', '类型', '金额', '币种', '折算金额', '分类', '账户', '转入账户', '成员', '商家', '备注', '标签', '来源', '状态', 'type_key'];
+
+/** 把 txn_time 归一成 HH:mm:ss（库里存的是 HH:mm:ss，缺时间则留空） */
+function exportTime(t) {
+  const s = String(t.txn_time || '').trim();
+  if (!s) return '';
+  const m = s.match(/^([01]\d|2[0-3]):([0-5]\d)(?::([0-5]\d))?$/);
+  return m ? `${m[1]}:${m[2]}:${m[3] || '00'}` : '';
+}
 
 function exportRows(ledgerId, rows) {
   return rows.map((t) => [
-    t.txn_date, t.type_label || t.type, (t.amount_cents / 100).toFixed(2), t.currency,
+    t.txn_date, exportTime(t), t.type_label || t.type, (t.amount_cents / 100).toFixed(2), t.currency,
     (t.amount_base_cents / 100).toFixed(2), t.category_path || '', t.account_name || '',
     t.to_account_name || '', t.member_name || '', t.merchant || '', t.note || '',
-    t.tag_names || '', t.source, t.status, '', t.type,
+    t.tag_names || '', t.source, t.status, t.type,
   ]);
 }
 

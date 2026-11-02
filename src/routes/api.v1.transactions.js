@@ -119,9 +119,9 @@ router.patch('/:id(\\d+)', auth.requireLogin, auth.requireLedgerWrite, api.async
   // PATCH 支持部分更新：note / tags / is_reimbursable / status 等单字段
   const sets = [];
   const args = [];
-  if (req.body.note !== undefined)              { sets.push('note = ?');            args.push(String(req.body.note)); }
-  if (req.body.merchant !== undefined)          { sets.push('merchant = ?');        args.push(String(req.body.merchant)); }
-  if (req.body.status !== undefined)            { sets.push('status = ?');          args.push(String(req.body.status)); }
+  if (req.body.note !== undefined)              { sets.push('note = ?');            args.push(String(req.body.note).slice(0, 300)); }
+  if (req.body.merchant !== undefined)          { sets.push('merchant = ?');        args.push(String(req.body.merchant).slice(0, 60)); }
+  if (req.body.status !== undefined)            { sets.push('status = ?');          args.push(String(req.body.status).slice(0, 16)); }
   if (req.body.is_reimbursable !== undefined)   { sets.push('is_reimbursable = ?'); args.push(req.body.is_reimbursable ? 1 : 0); }
   if (req.body.category_id !== undefined)       { sets.push('category_id = ?');     args.push(req.body.category_id || null); }
   if (req.body.account_id !== undefined)        { sets.push('account_id = ?');      args.push(req.body.account_id || null); }

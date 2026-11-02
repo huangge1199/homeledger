@@ -6,7 +6,7 @@ const accounts = express.Router();
 const categories = express.Router();
 const tags = express.Router();
 
-const { all, get, run, nowStr, todayStr, ACCOUNT_TYPE_MAP } = require('../db');
+const { all, get, run, nowStr, todayStr, dateShift, ACCOUNT_TYPE_MAP } = require('../db');
 const auth = require('../lib/auth');
 const api = require('../lib/api');
 const txn = require('../lib/txn');
@@ -23,11 +23,12 @@ accounts.get('/', auth.requireLogin, api.asyncHandler((req, res) => {
   const archived = fd.archivedAccounts(ledgerId);
   const flows = all(
     `SELECT account_id,
-            COALESCE(SUM(CASE WHEN type IN ('expense','lend','repay_pay','fee') THEN amount_base_cents ELSE 0 END),0) AS out,
+            COALESCE(SUM(CASE WHEN type IN ('expense','lend','repay_pay','fee') THEN amount_base_cents ELSE 0 END),0) AS out_amt,
             COALESCE(SUM(CASE WHEN type IN ('income','borrow','repay_receive','reimburse','refund','interest') THEN amount_base_cents ELSE 0 END),0) AS inflow
-     FROM transactions WHERE ledger_id = ? AND deleted_at IS NULL AND txn_date >= date(?, '-30 day')
-     GROUP BY account_id`, ledgerId, todayStr());
-  const flowMap = new Map(flows.map((f) => [Number(f.account_id), f]));
+     FROM transactions WHERE ledger_id = ? AND deleted_at IS NULL AND txn_date >= ?
+     GROUP BY account_id`, ledgerId, dateShift(-30));
+  // 别名 out 是 MySQL 保留字，SQL 里用 out_amt，这里归一化回 out 以保持 API 契约不变
+  const flowMap = new Map(flows.map((f) => [Number(f.account_id), { out: Number(f.out_amt || 0), inflow: Number(f.inflow || 0) }]));
   const list = overview.accounts.map((a) => ({
     ...a,
     flow: flowMap.get(Number(a.id)) || { out: 0, inflow: 0 },
@@ -165,8 +166,8 @@ categories.get('/', auth.requireLogin, api.asyncHandler((req, res) => {
   const incomeTree  = fd.categoryTree(ledgerId, 'income');
   const stats = all(
     `SELECT category_id, COUNT(*) AS cnt, COALESCE(SUM(amount_base_cents),0) AS total
-     FROM transactions WHERE ledger_id = ? AND deleted_at IS NULL AND txn_date >= date('now','-365 day')
-     GROUP BY category_id`, ledgerId);
+     FROM transactions WHERE ledger_id = ? AND deleted_at IS NULL AND txn_date >= ?
+     GROUP BY category_id`, ledgerId, dateShift(-365));
   const statMap = new Map(stats.map((s) => [Number(s.category_id), s]));
   const decorate = (node) => ({ ...node, stat: statMap.get(Number(node.id)) || { cnt: 0, total: 0 }, children: (node.children || []).map(decorate) });
   api.ok(res, {

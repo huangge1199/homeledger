@@ -1,8 +1,8 @@
 {
   "name": "homeledger-web",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "private": true,
-  "description": "家账簿 v2 前端 —— Vue 3 + Naive UI",
+  "description": "家账簿 v3 前端 —— Vue 3 + Naive UI",
   "type": "module",
   "scripts": {
     "dev": "vite",

@@ -52,7 +52,9 @@ function fmtSize(n) {
 // 前缀已被剥掉，这里必须挂 '/'，否则实际路径会变成 /api/v1/about/about 而 404。
 router.get('/', auth.requireLogin, api.asyncHandler((req, res) => {
   const isAdmin = !!(res.locals.user && res.locals.user.is_admin);
-  const dbSize = safeSize(DB_FILE);
+  const dialect = require('../db').dialect || 'sqlite';
+  // SQLite 才有单文件可算体积；MySQL / PostgreSQL 的库在服务端，本地文件大小无意义
+  const dbSize = dialect === 'sqlite' ? safeSize(DB_FILE) : 0;
   const uploadsSize = dirSize(path.join(DATA_DIR, 'uploads'));
   const stats = {
     txns: Number(get('SELECT COUNT(*) AS c FROM transactions WHERE deleted_at IS NULL')?.c || 0),
@@ -61,13 +63,14 @@ router.get('/', auth.requireLogin, api.asyncHandler((req, res) => {
     dataSize: dbSize + uploadsSize,
     dbSize,
     uploadsSize,
+    dialect,
   };
   // 运行天数：从第一笔记账（或首个账本创建）算起（created_at 为本地时间）
   const first = get(
     `SELECT MIN(created_at) AS t FROM (
        SELECT created_at FROM transactions UNION ALL
        SELECT created_at FROM ledgers
-     )`
+     ) AS d`
   );
   let days = 1;
   if (first && first.t) {

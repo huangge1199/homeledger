@@ -72,12 +72,13 @@ function saveDataUrlImage({ dataUrl, ledgerId, userId, name, kind = 'screenshot'
   fs.writeFileSync(abs, buf);
 
   const rel = path.relative(uploadsRoot(), abs).split(path.sep).join('/');
+  const storedName = String(name || fileName).slice(0, 255);
   const info = run(
     `INSERT INTO attachments (ledger_id, txn_id, user_id, kind, file_name, rel_path, mime, size, ai_status, created_at)
      VALUES (?,NULL,?,?,?,?,?,?,?,?)`,
-    Number(ledgerId), Number(userId), kind, name || fileName, rel, mime, buf.length, aiStatus, nowStr()
+    Number(ledgerId), Number(userId), kind, storedName, rel, mime, buf.length, aiStatus, nowStr()
   );
-  return { id: Number(info.lastInsertRowid), rel, url: webUrl(rel), size: buf.length, mime, file_name: name || fileName };
+  return { id: Number(info.lastInsertRowid), rel, url: webUrl(rel), size: buf.length, mime, file_name: storedName };
 }
 
 /**

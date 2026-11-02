@@ -457,12 +457,7 @@ function buildUserPrompt({ text, ctx, today }) {
 function resolveCategoryId(ledgerId, nameHint, kind) {
   if (!nameHint) return null;
   const hint = String(nameHint).trim();
-  const rows = all(
-    `SELECT c.id, c.name, c.kind, p.name AS parent FROM categories c
-     LEFT JOIN categories p ON p.id = c.parent_id
-     WHERE (c.ledger_id IS NULL OR c.ledger_id = ?) AND c.kind = ? AND c.is_archived = 0`,
-    ledgerId, kind
-  );
+  const rows = loadCategories(ledgerId, kind);
   const norm = (s) => String(s || '').replace(/\s/g, '');
   const target = norm(hint);
   // 1) 完整路径精确匹配
@@ -489,10 +484,37 @@ function resolveCategoryId(ledgerId, nameHint, kind) {
   return null;
 }
 
+/**
+ * 分类查询缓存：批量导入时同一账本的分类会被反复解析，
+ * 每次都查库在远程驱动下会成百上千次跨线程往返，必须缓存。
+ * 缓存由调用方（导入流程）在批次开始/结束时清空，避免脏读。
+ */
+const catCache = new Map();
+function loadCategories(ledgerId, kind) {
+  const key = `${ledgerId}|${kind}`;
+  let rows = catCache.get(key);
+  if (!rows) {
+    rows = all(
+      `SELECT c.id, c.name, c.kind, p.name AS parent FROM categories c
+       LEFT JOIN categories p ON p.id = c.parent_id
+       WHERE (c.ledger_id IS NULL OR c.ledger_id = ?) AND c.kind = ? AND c.is_archived = 0`,
+      ledgerId, kind
+    );
+    catCache.set(key, rows);
+  }
+  return rows;
+}
+
+/** 清空分类/账户查询缓存（导入批次结束后调用） */
+function clearResolveCache() {
+  catCache.clear();
+  accCache.clear();
+}
+
 /** 账户名 → 账户 id（宽松匹配） */
 function resolveAccountId(ledgerId, nameHint) {
   if (!nameHint) return null;
-  const accounts = all('SELECT id, name FROM accounts WHERE ledger_id = ? AND is_archived = 0', ledgerId);
+  const accounts = loadAccounts(ledgerId);
   const hint = String(nameHint).replace(/\s/g, '');
   for (const a of accounts) if (hint.includes(a.name.replace(/\s/g, '')) || a.name.replace(/\s/g, '').includes(hint)) return Number(a.id);
   for (const a of accounts) {
@@ -502,6 +524,23 @@ function resolveAccountId(ledgerId, nameHint) {
     if (hint.includes('信用') && /信用/.test(a.name)) return Number(a.id);
   }
   return null;
+}
+
+/** 账户查询缓存（同 loadCategories，避免批量导入时反复查库） */
+const accCache = new Map();
+function loadAccounts(ledgerId) {
+  let rows = accCache.get(ledgerId);
+  if (!rows) {
+    rows = all('SELECT id, name FROM accounts WHERE ledger_id = ? AND is_archived = 0', ledgerId);
+    accCache.set(ledgerId, rows);
+  }
+  return rows;
+}
+
+/** 账户表有变动（新建/改名/停用）时让缓存失效，下次访问重新查库 */
+function invalidateAccountCache(ledgerId) {
+  if (ledgerId === undefined) accCache.clear();
+  else accCache.delete(Number(ledgerId));
 }
 
 /** 规范化模型/规则输出的时刻：统一成 HH:mm，非法或缺失返回 '' */
@@ -712,7 +751,7 @@ async function listModels(override = {}) {
 module.exports = {
   getAiConfig, isAiReady, isAiUsable, isLocalUrl, analyzeBill, testConnection,
   classifyByKeywords, guessAccountName, parseDateWords, parseTextByRules,
-  resolveCategoryId, resolveAccountId, normalizeItem, buildContext,
+  resolveCategoryId, resolveAccountId, clearResolveCache, invalidateAccountCache, normalizeItem, buildContext,
   extractAmount, cleanMerchant, callModel, listModels, guessVision,
   isHeaderSafe, isMaskedSecret, sanitizeSecret,
 };

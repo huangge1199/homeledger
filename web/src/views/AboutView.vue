@@ -96,7 +96,7 @@ function reloadPage() {
 
 <template>
   <AppShell>
-    <PageHead title="关于" :sub="`家账簿 HomeLedger · v${data?.version || '2.0.0'} 重构版（Vue 3 + Naive UI）`" />
+    <PageHead title="关于" :sub="`家账簿 HomeLedger · v${data?.version || '3.0.0'} 多数据库存储版（Vue 3 + Naive UI）`" />
 
     <NSpin :show="loading">
       <!-- 品牌头 -->
@@ -106,7 +106,7 @@ function reloadPage() {
           <div class="hero-main">
             <div class="hero-row">
               <h1 class="title">{{ app.name || '家账簿 HomeLedger' }}</h1>
-              <NTag :bordered="false" type="primary">v{{ data?.version || '2.0.0' }}</NTag>
+              <NTag :bordered="false" type="primary">v{{ data?.version || '3.0.0' }}</NTag>
               <NTag v-for="c in changelog.filter((x: any) => x.tag)" :key="c.version" :bordered="false">
                 {{ c.tag }}
               </NTag>
@@ -219,7 +219,12 @@ function reloadPage() {
             </NTag>
           </div>
           <NAlert type="info" :show-icon="true" style="margin-top: 12px" class="small-alert">
-            🔒 数据与隐私：所有账目、附件仅存储在本机数据目录（{{ env.dataDir }}），不上传任何第三方服务器；
+            🔒 数据与隐私：所有账目、附件仅存储在你自己的服务器上
+            <template v-if="stat.dialect && stat.dialect !== 'sqlite'">
+              （数据库：{{ stat.dialect === 'mysql' ? 'MySQL' : 'PostgreSQL' }}）
+            </template>
+            <template v-else>（数据目录：{{ env.dataDir }}）</template>
+            ，不上传任何第三方服务器；
             AI 功能仅在管理员主动配置模型后按需调用。
           </NAlert>
         </NCard>
@@ -255,7 +260,12 @@ function reloadPage() {
               :border-radius="4"
               style="margin-top: 4px"
             />
-            <NText depth="3" class="tiny">{{ fmtBytes(dbBytes) }}</NText>
+            <NText depth="3" class="tiny">
+              <template v-if="stat.dialect && stat.dialect !== 'sqlite'">
+                {{ stat.dialect === 'mysql' ? 'MySQL' : 'PostgreSQL' }}（数据在数据库服务端）
+              </template>
+              <template v-else>{{ fmtBytes(dbBytes) }}</template>
+            </NText>
           </NGridItem>
           <NGridItem span="2 m:1 l:1">
             <div class="lbl">附件</div>

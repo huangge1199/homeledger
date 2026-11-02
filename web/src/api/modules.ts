@@ -2,7 +2,7 @@
  * 业务模块 API 封装 —— 组件不直接拼 URL
  * 每个方法返回解包后的 data 字段（已通过 { ok, data } 解包）
  */
-import { api } from './client'
+import { api, IMPORT_TIMEOUT } from './client'
 
 // --- 通用 ---
 export const SessionApi = {
@@ -214,9 +214,9 @@ export const AdminApi = {
   // import
   importJobs: () => api.get('/admin/import/jobs').then((r) => r.data.data),
   importPreview: (dataUrl: string, fileName: string) =>
-    api.post('/admin/import/preview', { dataUrl, fileName }, { headers: { 'Content-Type': 'application/json' } }).then((r) => r.data.data),
+    api.post('/admin/import/preview', { dataUrl, fileName }, { headers: { 'Content-Type': 'application/json' }, timeout: IMPORT_TIMEOUT }).then((r) => r.data.data),
   importCommit: (payload: Record<string, unknown>) =>
-    api.post('/admin/import/commit', payload, { headers: { 'Content-Type': 'application/json' } }).then((r) => r.data.data),
+    api.post('/admin/import/commit', payload, { headers: { 'Content-Type': 'application/json' }, timeout: IMPORT_TIMEOUT }).then((r) => r.data.data),
   exportYears: () => api.get('/admin/export/years').then((r) => r.data.data),
   // backup
   backup: () => api.post('/admin/backup/db').then((r) => r.data),

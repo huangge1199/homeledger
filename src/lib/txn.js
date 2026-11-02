@@ -74,7 +74,8 @@ function buildWhere(ledgerId, f = {}) {
     params.push(f.tagId);
   }
   if (f.month) {
-    where.push("strftime('%Y-%m', t.txn_date) = ?");
+    // txn_date 固定为 YYYY-MM-DD，取前 7 位即月份（substr 三种数据库通用，替代 SQLite 的 strftime）
+    where.push('substr(t.txn_date, 1, 7) = ?');
     params.push(f.month);
   }
   /**
@@ -85,18 +86,18 @@ function buildWhere(ledgerId, f = {}) {
    */
   if (f.from) {
     const full = String(f.from).length === 10 ? `${f.from} 00:00:00` : f.from;
-    where.push("(t.txn_date || ' ' || COALESCE(t.txn_time, '00:00:00')) >= ?");
+    where.push("CONCAT(t.txn_date, ' ', COALESCE(t.txn_time, '00:00:00')) >= ?");
     params.push(full);
   }
   if (f.to) {
     const full = String(f.to).length === 10 ? `${f.to} 23:59:59` : f.to;
-    where.push("(t.txn_date || ' ' || COALESCE(t.txn_time, '23:59:59')) <= ?");
+    where.push("CONCAT(t.txn_date, ' ', COALESCE(t.txn_time, '23:59:59')) <= ?");
     params.push(full);
   }
   if (f.minCents) { where.push('t.amount_base_cents >= ?'); params.push(f.minCents); }
   if (f.maxCents) { where.push('t.amount_base_cents <= ?'); params.push(f.maxCents); }
   if (f.keyword) {
-    where.push('(t.note LIKE ? OR t.merchant LIKE ? OR c.name LIKE ? OR pc.name LIKE ? OR a.name LIKE ? OR CAST(t.amount_base_cents AS TEXT) LIKE ?)');
+    where.push('(t.note LIKE ? OR t.merchant LIKE ? OR c.name LIKE ? OR pc.name LIKE ? OR a.name LIKE ? OR CAST(t.amount_base_cents AS CHAR) LIKE ?)');
     const kw = `%${f.keyword}%`;
     params.push(kw, kw, kw, kw, kw, kw);
   }
@@ -337,7 +338,8 @@ function applyTags(txnId, ledgerId, tagsInput, replace = false) {
       const info = run('INSERT INTO tags (ledger_id, name, color) VALUES (?,?,?)', ledgerId, name, colorFromName(name));
       tag = { id: info.lastInsertRowid };
     }
-    try { run('INSERT OR IGNORE INTO transaction_tags (transaction_id, tag_id) VALUES (?,?)', txnId, tag.id); } catch { /* ignore */ }
+    // ON CONFLICT DO NOTHING：SQLite ≥3.24 / PostgreSQL 原生支持，MySQL 由驱动层翻译为 INSERT IGNORE
+    try { run('INSERT INTO transaction_tags (transaction_id, tag_id) VALUES (?,?) ON CONFLICT DO NOTHING', txnId, tag.id); } catch { /* ignore */ }
   }
 }
 
@@ -440,8 +442,8 @@ function categoryBreakdown(ledgerId, start, end, kind = 'expense') {
   const types = kind === 'income' ? INCOME_TYPES : EXPENSE_TYPES;
   const rows = all(
     `SELECT COALESCE(pc.name, c.name, '未分类') AS name,
-            COALESCE(pc.icon, c.icon, '🏷️') AS icon,
-            COALESCE(pc.color, c.color, '#8c8c8c') AS color,
+            MIN(COALESCE(pc.icon, c.icon, '🏷️')) AS icon,
+            MIN(COALESCE(pc.color, c.color, '#8c8c8c')) AS color,
             SUM(t.amount_base_cents) AS total, COUNT(*) AS cnt
      FROM transactions t
      LEFT JOIN categories c ON c.id = t.category_id
@@ -467,7 +469,8 @@ function subcategoryBreakdown(ledgerId, start, end, kind = 'expense', topName = 
          AND t.type IN (${types.map(() => '?').join(',')})`;
   const params = [ledgerId, start, end, ...types];
   if (topName) { sql += ' AND COALESCE(pc.name, c.name) = ?'; params.push(topName); }
-  sql += ' GROUP BY c.id ORDER BY total DESC';
+  // 非聚合列必须全部出现在 GROUP BY 中（MySQL only_full_group_by / PostgreSQL 同样要求）
+  sql += ' GROUP BY c.id, c.name, c.icon, c.color, pc.name ORDER BY total DESC';
   return all(sql, ...params).map((r) => ({ ...r, total: Number(r.total), cnt: Number(r.cnt) }));
 }
 
@@ -477,7 +480,7 @@ function monthlyTrend(ledgerId, months = 6, ref = new Date()) {
   const from = `${list[0]}-01`;
   const to = `${list[list.length - 1]}-31`;
   const rows = all(
-    `SELECT strftime('%Y-%m', txn_date) AS m,
+    `SELECT substr(txn_date, 1, 7) AS m,
       COALESCE(SUM(CASE WHEN type IN (${INCOME_TYPES.map(() => '?').join(',')}) THEN amount_base_cents ELSE 0 END),0) AS income,
       COALESCE(SUM(CASE WHEN type IN (${EXPENSE_TYPES.map(() => '?').join(',')}) THEN amount_base_cents ELSE 0 END),0) AS expense
      FROM transactions WHERE ledger_id = ? AND deleted_at IS NULL AND txn_date BETWEEN ? AND ?
@@ -500,7 +503,7 @@ function memberBreakdown(ledgerId, start, end) {
        COUNT(*) AS cnt
      FROM transactions t JOIN users u ON u.id = t.user_id
      WHERE t.ledger_id = ? AND t.deleted_at IS NULL AND t.txn_date BETWEEN ? AND ?
-     GROUP BY u.id ORDER BY expense DESC`,
+     GROUP BY u.id, u.display_name, u.avatar_color ORDER BY expense DESC`,
     ...EXPENSE_TYPES, ...INCOME_TYPES, ledgerId, start, end
   ).map((r) => ({ ...r, expense: Number(r.expense), income: Number(r.income), cnt: Number(r.cnt) }));
 }

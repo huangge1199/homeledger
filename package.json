@@ -1,8 +1,8 @@
 {
   "name": "homeledger",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "private": true,
-  "description": "家账簿 HomeLedger —— 自托管家庭记账系统：全类型记账 + AI 截图/文本自动记账 + 开放 API，前端 Vue 3 SPA，数据自持于 SQLite",
+  "description": "家账簿 HomeLedger —— 自托管家庭记账系统：全类型记账 + AI 截图/文本自动记账 + 开放 API，前端 Vue 3 SPA，支持 SQLite / MySQL / PostgreSQL 三种存储",
   "main": "server.js",
   "scripts": {
     "start": "node --no-warnings --env-file=.env server.js",
@@ -13,6 +13,8 @@
   },
   "dependencies": {
     "express": "^4.21.2",
-    "express-session": "^1.18.1"
+    "express-session": "^1.18.1",
+    "mysql2": "^3.11.0",
+    "pg": "^8.13.0"
   }
 }

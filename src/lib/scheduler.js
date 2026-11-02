@@ -7,7 +7,7 @@
  *  - 失效邀请码与会话清理
  * 每天执行一次 + 每 30 分钟兜底轮询
  */
-const { all, get, run, tx, nowStr, todayStr } = require('../db');
+const { all, get, run, tx, nowStr, todayStr, dateShift } = require('../db');
 const { notify, ledgerWriterIds, alreadyNotified } = require('./auth');
 const { addMonths, pad, monthOf } = require('./util');
 
@@ -207,8 +207,8 @@ function checkBudgets() {
 function checkDebts() {
   const today = todayStr();
   const soon = all(
-    `SELECT * FROM debts WHERE status = 'open' AND due_date IS NOT NULL AND due_date <= date(?, '+3 day')`,
-    today
+    `SELECT * FROM debts WHERE status = 'open' AND due_date IS NOT NULL AND due_date <= ?`,
+    dateShift(3)
   );
   let n = 0;
   for (const d of soon) {
@@ -234,7 +234,7 @@ function checkDebts() {
 
 function checkGoals() {
   const today = todayStr();
-  const goals = all("SELECT * FROM goals WHERE status = 'active' AND target_date IS NOT NULL AND target_date <= date(?, '+7 day')", today);
+  const goals = all("SELECT * FROM goals WHERE status = 'active' AND target_date IS NOT NULL AND target_date <= ?", dateShift(7));
   let n = 0;
   for (const g of goals) {
     const dedupeKey = `goal:${g.id}:${g.target_date}`;

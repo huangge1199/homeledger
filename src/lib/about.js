@@ -43,9 +43,30 @@ const FEATURES = [
  */
 const CHANGELOG = [
   {
+    version: '3.0.0',
+    date: '2026-11-02',
+    tag: '当前版本',
+    items: [
+      '存储层支持 SQLite / MySQL 8+ / PostgreSQL 12+ 三选一，由 .env 的 DB_SQLITE_ENABLE / DB_MYSQL_ENABLE / DB_POSTGRES_ENABLE 决定（多个同时启用直接报错拒绝启动，全不启用回落 SQLite）',
+      '新增 src/db/ 存储抽象层：schema.js（21 张表 DDL + 增量迁移）、sqlite.js（SQLite 驱动）、remote.js + worker.js（MySQL / PG 同步桥接）、translate.js（方言翻译）；src/db.js 保持唯一入口，业务代码与对外 API 零改动',
+      '基于 worker_threads + SharedArrayBuffer + Atomics.wait 实现同步桥接，规避 mysql2 / pg 异步驱动与全代码库同步调用的冲突',
+      '方言翻译层统一处理三方言差异：ON CONFLICT → ON DUPLICATE KEY UPDATE / INSERT IGNORE、? → $n、LIKE → ILIKE、GROUP_CONCAT → string_agg / SEPARATOR、CAST AS CHAR → AS TEXT、AUTOINCREMENT → AUTO_INCREMENT / BIGSERIAL',
+      '全库 SQL 归一化，清理 SQLite 专有语法：strftime() / date() / IFNULL / || 拼接 / INSERT OR IGNORE / AUTOINCREMENT / PRAGMA',
+      '修复 MySQL 下 || 被当作逻辑或导致的静默数据错误（日期区间筛选返回错结果、删除用户后用户名被写成 0），改用 CONCAT() 与应用层拼接',
+      '修复 MySQL only_full_group_by 严格模式下 3 处 GROUP BY 缺非聚合列导致的查询报错',
+      '修复 MySQL 保留字 key（settings 表）、out（别名）导致的建表与查询语法错误',
+      '修复 VARCHAR 列宽过窄（password_hash 实际 179 字符）与 INTEGER 存毫秒时间戳溢出 32 位（avatar_ver 改 BIGINT）',
+      '修复局部更新个人资料被误判为改名（只传昵称 / 邮箱时返回 400）',
+      '新增 db.runBatch 批量写入能力 + 分类 / 账户查询缓存 + 导入改为先解析后批量落库：MySQL 下 1466 笔导入从 89.5 秒 → 1.0 秒',
+      '导入接口前端超时单独放宽至 300 秒；修复导出 CSV 缺失时间列且回导无法还原 txn_time',
+      '删除账本新增「至少保留一个」校验，避免删光账本后侧栏菜单整体消失',
+      '整库备份仅 SQLite 可用，MySQL / PostgreSQL 下接口明确提示改用数据库自带工具',
+    ],
+  },
+  {
     version: '2.0.0',
     date: '2026-10-16',
-    tag: '当前版本',
+    tag: '历史版本',
     items: [
       '重大重构：前端从 EJS + jQuery SSR 全面迁移到 Vue 3 + Naive UI SPA（vite/typescript/pinia/vue-router）',
       '后端同步 API 化：35 个 EJS 渲染路由全部退役，改为纯 JSON 接口 `/api/v1/*`；未匹配 GET 走 SPA fallback，由前端路由接管',
@@ -342,7 +363,7 @@ const CHANGELOG = [
 /** 技术栈（关于页展示） */
 const TECH = [
   { name: 'Node.js ≥ 22', desc: '零原生依赖，纯 JS 单进程' },
-  { name: 'SQLite', desc: 'node:sqlite 内置驱动，数据自持' },
+  { name: 'SQLite / MySQL / PostgreSQL', desc: '三种关系型数据库任选，.env 中 DB_*_ENABLE 决定' },
   { name: 'Vue 3 SPA', desc: 'Vue 3 + Naive UI 前端，服务端只出 JSON 接口' },
   { name: '飞牛 fnOS', desc: 'fpk 应用包，桌面内嵌运行' },
 ];

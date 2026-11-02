@@ -139,7 +139,8 @@ router.patch('/settings/profile', auth.requireLogin, api.asyncHandler((req, res)
   const username = String(req.body.username || '').trim();
   const color = /^#[0-9a-fA-F]{6}$/.test(req.body.avatar_color || '') ? req.body.avatar_color : res.locals.user.avatar_color;
   if (!displayName) return api.badRequest(res, '昵称不能为空');
-  if (username !== res.locals.user.username) {
+  // username 未传（局部更新）时保持原值；传了且与当前不同才视为改名
+  if (username && username !== res.locals.user.username) {
     if (!/^[A-Za-z0-9_\-.]{2,24}$/.test(username)) return api.badRequest(res, '用户名需为 2-24 位字母、数字或 _ - . 组合');
     const dup = get('SELECT id FROM users WHERE username = ? AND id != ?', username, req.session.userId);
     if (dup) return api.conflict(res, `用户名「${username}」已被占用`);
@@ -147,7 +148,7 @@ router.patch('/settings/profile', auth.requireLogin, api.asyncHandler((req, res)
     auth.audit(req, 'user.username_change', { entity: 'user', entityId: req.session.userId, detail: `${res.locals.user.username} → ${username}` });
   }
   run('UPDATE users SET display_name = ?, email = ?, avatar_color = ? WHERE id = ?',
-    displayName.slice(0, 30), email, color, req.session.userId);
+    displayName.slice(0, 30), email ? email.slice(0, 255) : null, color, req.session.userId);
   api.saved(res, '已更新');
 }));
 
@@ -327,6 +328,14 @@ router.delete('/ledgers/:id(\\d+)', auth.requireLogin, api.asyncHandler((req, re
   const l = get('SELECT * FROM ledgers WHERE id = ? AND owner_id = ?', id, req.session.userId);
   if (!l) return api.forbidden(res, '只有账本拥有者可以删除账本');
   if (String(req.body.confirm || '') !== l.name) return api.badRequest(res, '请准确输入账本名称以确认删除');
+  // 至少保留一个账本：删光后没有当前账本，侧栏菜单会整体消失且无法再进入账本管理页
+  const remain = get(
+    'SELECT COUNT(*) AS c FROM ledgers WHERE owner_id = ? AND id <> ?',
+    req.session.userId, id
+  );
+  if (Number(remain?.c || 0) < 1) {
+    return api.badRequest(res, '至少需要保留一个账本，请先创建新账本再删除');
+  }
   const files = [];
   tx(() => { files.push(...cascadeDeleteLedger(id)); });
   cleanupUploadFiles(files);
@@ -504,6 +513,8 @@ router.post('/import/preview', auth.requireLogin, auth.requireLedgerWrite, api.a
     }));
   const myLedgers = (res.locals.ledgers || []).filter((l) => auth.canWrite(l.role))
     .map((l) => ({ id: Number(l.id), name: l.name, icon: l.icon, isCurrent: Number(l.id) === ledgerId }));
+  // 预览期间用过分类/账户查询缓存，这里清空避免后续请求读到过期数据
+  ai.clearResolveCache();
   api.ok(res, {
     token,
     source: parsed.source,
@@ -555,6 +566,7 @@ router.get('/export/years', auth.requireLogin, api.asyncHandler((req, res) => {
 
 /* ============================================ 备份 / 恢复 ============================================ */
 router.post('/backup/db', auth.requireLogin, auth.requireAdmin, api.asyncHandler((req, res) => {
+  if (require('../db').dialect !== 'sqlite') return api.badRequest(res, '当前数据库类型不支持整库备份/恢复，请使用数据库自带的备份工具');
   // 备份走 SSR 直下载（浏览器 GET 文件流）：JSON 端点仅返回元信息
   const target = path.join(DATA_DIR, `backup-${todayStr()}-${Date.now()}.db`);
   require('../db').db.exec(`VACUUM INTO '${target.replace(/'/g, "''")}'`);
@@ -563,6 +575,7 @@ router.post('/backup/db', auth.requireLogin, auth.requireAdmin, api.asyncHandler
 }));
 
 router.get('/backup/db', auth.requireLogin, auth.requireAdmin, (req, res) => {
+  if (require('../db').dialect !== 'sqlite') return res.status(400).json({ ok: false, error: '当前数据库类型不支持整库备份/恢复，请使用数据库自带的备份工具' });
   const target = path.join(DATA_DIR, `backup-${todayStr()}-${Date.now()}.db`);
   require('../db').db.exec(`VACUUM INTO '${target.replace(/'/g, "''")}'`);
   auth.audit(req, 'backup.download');
@@ -573,6 +586,7 @@ router.get('/backup/db', auth.requireLogin, auth.requireAdmin, (req, res) => {
 });
 
 router.post('/backup/restore', auth.requireLogin, auth.requireAdmin, api.asyncHandler((req, res) => {
+  if (require('../db').dialect !== 'sqlite') return api.badRequest(res, '当前数据库类型不支持整库备份/恢复，请使用数据库自带的备份工具');
   const m = /^data:.*?;base64,(.+)$/s.exec(String(req.body.dataUrl || ''));
   if (!m) return api.badRequest(res, '请选择 .db 数据库文件');
   const buf = Buffer.from(m[1], 'base64');
@@ -648,7 +662,10 @@ router.post('/admin/users/:id(\\d+)/action', auth.requireLogin, auth.requireAdmi
       run('DELETE FROM sessions WHERE user_id = ?', id);
       run('UPDATE api_tokens SET revoked_at = ? WHERE user_id = ?', nowStr(), id);
       run('DELETE FROM notifications WHERE user_id = ?', id);
-      run("UPDATE users SET status = 'disabled', username = username || '_deleted_' || id WHERE id = ?", id);
+      // 用户名加后缀避免与保留名冲突：不能写成 SQL 的 || 拼接（MySQL 会当逻辑或），改由应用层拼好再写入
+      const target = get('SELECT username FROM users WHERE id = ?', id);
+      const deletedName = `${(target && target.username) || 'user'}_deleted_${id}`;
+      run("UPDATE users SET status = 'disabled', username = ? WHERE id = ?", deletedName, id);
       if (String(req.body.hard || '') === '1') run('DELETE FROM users WHERE id = ?', id);
       break;
     }

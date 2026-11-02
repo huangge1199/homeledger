@@ -12,6 +12,12 @@ export const api = axios.create({
   headers: { 'X-Requested-With': 'XMLHttpRequest' },
 })
 
+/**
+ * 导入接口专用超时：大批量导入（上千条）在远程数据库（MySQL/PostgreSQL）下
+ * 需要更长的处理时间，默认 30 秒会误报为超时。
+ */
+export const IMPORT_TIMEOUT = 300_000
+
 // CSRF：从 session store 拿（首屏后由 /api/v1/session 注入）
 const csrf = () => {
   const s = useSessionStore()

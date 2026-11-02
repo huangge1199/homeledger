@@ -19,10 +19,51 @@ services:
       # 首次启动自动创建管理员（仅当库中还没有任何用户时生效）
       ADMIN_USER: "${ADMIN_USER:-admin}"
       ADMIN_PASSWORD: "${ADMIN_PASSWORD:-admin888}"
+      # —— 数据库三选一（都不配置时默认 SQLite）——
+      # 启用 MySQL/PostgreSQL 时：取消下方对应服务注释、这里改 ENABLE 并填连接信息
+      # DB_SQLITE_ENABLE: "true"
+      # DB_MYSQL_ENABLE: "false"
+      # DB_MYSQL_HOST: mysql
+      # DB_MYSQL_PORT: "3306"
+      # DB_MYSQL_USER: homeledger
+      # DB_MYSQL_PASSWORD: homeledger-pass
+      # DB_MYSQL_DATABASE: homeledger
+      # DB_POSTGRES_ENABLE: "false"
+      # DB_POSTGRES_HOST: postgres
+      # DB_POSTGRES_PORT: "5432"
+      # DB_POSTGRES_USER: homeledger
+      # DB_POSTGRES_PASSWORD: homeledger-pass
+      # DB_POSTGRES_DATABASE: homeledger
     volumes:
       # 飞牛 NAS：把左侧换成你自己的共享文件夹路径，例如
       #   /vol1/1000/docker/homeledger/data
       - ./data:/data
+
+  # 可选：MySQL 存储后端（启用时把 homeledger 的 DB_MYSQL_ENABLE 改为 "true"）
+  # mysql:
+  #   image: mysql:8.4
+  #   container_name: my-homeledger-mysql
+  #   restart: unless-stopped
+  #   environment:
+  #     MYSQL_DATABASE: homeledger
+  #     MYSQL_USER: homeledger
+  #     MYSQL_PASSWORD: homeledger-pass
+  #     MYSQL_ROOT_PASSWORD: root-pass
+  #   volumes:
+  #     - ./mysql:/var/lib/mysql
+  #   # MySQL 8 默认字符集即为 utf8mb4，emoji 可正常存储
+
+  # 可选：PostgreSQL 存储后端（启用时把 homeledger 的 DB_POSTGRES_ENABLE 改为 "true"）
+  # postgres:
+  #   image: postgres:16-alpine
+  #   container_name: my-homeledger-pg
+  #   restart: unless-stopped
+  #   environment:
+  #     POSTGRES_DB: homeledger
+  #     POSTGRES_USER: homeledger
+  #     POSTGRES_PASSWORD: homeledger-pass
+  #   volumes:
+  #     - ./pgdata:/var/lib/postgresql/data
 
 # 说明：
 # 1. 所有数据（SQLite 数据库 + 账单截图附件）都在 ./data 目录下，
