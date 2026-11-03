@@ -41,9 +41,11 @@ async function initSchema() {
     }
   }
   // 增量迁移：列不存在才加
+  // 注意：本处 SQL 直连驱动执行，不经过 translate()，占位符必须按方言手写。
+  // PG 的 ? 是 jsonb 存在操作符（'?'），写成 ? 会被解析成操作符导致后续 ORDER 报语法错。
   const colSql = dialect === 'mysql'
     ? 'SELECT COLUMN_NAME AS name FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? ORDER BY ORDINAL_POSITION'
-    : 'SELECT column_name AS name FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = ? ORDER BY ordinal_position';
+    : 'SELECT column_name AS name FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = $1 ORDER BY ordinal_position';
   for (const { table, column, ddl } of MIGRATIONS) {
     const res = await q(colSql, [table]);
     const rows = dialect === 'mysql' ? res[0] : res.rows;
@@ -77,7 +79,7 @@ async function execQuery(kind, sql, params) {
     return { changes: Number(res.affectedRows || 0), lastInsertRowid: Number(res.insertId || 0) };
   }
   // PostgreSQL
-  const client = txClient || pool;
+  const client = txConn || pool;
   const res = await client.query(t, clean);
   if (kind === 'run') {
     return { changes: res.rowCount, lastInsertRowid: res.rows[0] ? Number(res.rows[0].id) : 0 };
@@ -120,7 +122,7 @@ async function execBulk(sql, rows) {
       changes += Number(res.affectedRows || 0);
       if (res.insertId) lastInsertRowid = Number(res.insertId);
     } else {
-      const client = txClient || pool;
+      const client = txConn || pool;
       const res = await client.query(stmt, flat);
       changes += res.rowCount;
       if (res.rows[0] && res.rows[0].id) lastInsertRowid = Number(res.rows[0].id);
@@ -144,22 +146,22 @@ async function handle(job) {
         txConn = await pool.getConnection();
         await txConn.beginTransaction();
       } else {
-        txClient = await pool.connect();
-        await txClient.query('BEGIN');
+        txConn = await pool.connect();
+        await txConn.query('BEGIN');
       }
       return null;
     case 'tx-commit':
       if (dialect === 'mysql') {
         await txConn.commit(); txConn.release(); txConn = null;
       } else {
-        await txClient.query('COMMIT'); txClient.release(); txClient = null;
+        await txConn.query('COMMIT'); txConn.release(); txConn = null;
       }
       return null;
     case 'tx-rollback':
       if (dialect === 'mysql') {
         try { await txConn.rollback(); } finally { txConn.release(); txConn = null; }
       } else {
-        try { await txClient.query('ROLLBACK'); } finally { txClient.release(); txClient = null; }
+        try { await txConn.query('ROLLBACK'); } finally { txConn.release(); txConn = null; }
       }
       return null;
     default:
