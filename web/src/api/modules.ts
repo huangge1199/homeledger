@@ -2,7 +2,7 @@
  * 业务模块 API 封装 —— 组件不直接拼 URL
  * 每个方法返回解包后的 data 字段（已通过 { ok, data } 解包）
  */
-import { api, IMPORT_TIMEOUT } from './client'
+import { api, AI_TIMEOUT, IMPORT_TIMEOUT } from './client'
 
 // --- 通用 ---
 export const SessionApi = {
@@ -154,11 +154,11 @@ export const ReportsApi = {
 export const AiApi = {
   config: () => api.get('/ai/config').then((r) => r.data.data),
   scan: (payload: { text?: string; images?: Array<{ name?: string; dataUrl: string }> }) =>
-    api.post('/ai/scan', payload, { headers: { 'Content-Type': 'application/json' } }).then((r) => r.data.data),
+    api.post('/ai/scan', payload, { headers: { 'Content-Type': 'application/json' }, timeout: AI_TIMEOUT }).then((r) => r.data.data),
   text: (text: string) =>
-    api.post('/ai/text', { text }, { headers: { 'Content-Type': 'application/json' } }).then((r) => r.data.data),
+    api.post('/ai/text', { text }, { headers: { 'Content-Type': 'application/json' }, timeout: AI_TIMEOUT }).then((r) => r.data.data),
   chat: (payload: { text?: string; images?: Array<{ name?: string; dataUrl: string }> }) =>
-    api.post('/ai/chat', payload, { headers: { 'Content-Type': 'application/json' } }).then((r) => r.data.data),
+    api.post('/ai/chat', payload, { headers: { 'Content-Type': 'application/json' }, timeout: AI_TIMEOUT }).then((r) => r.data.data),
   confirm: (items: unknown[], image_ids: number[] = [], source = 'ai_screenshot') =>
     api.post('/ai/confirm', { items, image_ids, source }, { headers: { 'Content-Type': 'application/json' } }).then((r) => r.data.data),
   attachments: (page = 1) =>

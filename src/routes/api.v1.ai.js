@@ -32,12 +32,33 @@ router.post('/scan', auth.requireLogin, auth.requireLedgerWrite, api.asyncHandle
   const images = Array.isArray(req.body.images) ? req.body.images.slice(0, 6) : [];
   const text = String(req.body.text || '').slice(0, 4000);
   if (!images.length && !text) return api.badRequest(res, '请上传账单截图或输入账单文字');
-  const saved = [];
-  for (const img of images) {
-    saved.push(await att.saveDataUrlImage({ dataUrl: img.dataUrl, ledgerId, userId: req.session.userId, name: img.name }));
+
+  // 逐张处理，顺序与前端传入的 images 严格一一对应（saved[i] 对应 images[i]）：
+  //   带 id 的 = 上次已存过的附件，服务器直接从存储取图（识别失败重试不再重复上传）
+  //   不带 id 的 = 本次新传，落盘（内容完全相同的会自动复用已有附件，不会重复存）
+  const saved = new Array(images.length).fill(null);
+  const modelImages = [];
+  for (let i = 0; i < images.length; i++) {
+    const img = images[i];
+    const id = Number(img.id) || 0;
+    let row = null;
+    let dataUrl = '';
+    if (id) {
+      const found = await att.readDataUrl(ledgerId, id);
+      if (found) { row = found.row; dataUrl = found.dataUrl; }
+    }
+    if (!row) {
+      if (!img.dataUrl) continue;
+      row = await att.saveDataUrlImage({ dataUrl: img.dataUrl, ledgerId, userId: req.session.userId, name: img.name });
+      dataUrl = img.dataUrl;
+    }
+    saved[i] = row;
+    modelImages.push(dataUrl);
   }
-  const result = await ai.analyzeBill({ images, text, ledgerId });
-  if (saved[0]) run('UPDATE attachments SET ai_status = ? WHERE id = ?', result.engine === 'llm' ? 'recognized' : 'rule', saved[0].id);
+
+  const result = await ai.analyzeBill({ images: modelImages, text, ledgerId });
+  const firstSaved = saved.find(Boolean);
+  if (firstSaved) run('UPDATE attachments SET ai_status = ? WHERE id = ?', result.engine === 'llm' ? 'recognized' : 'rule', firstSaved.id);
   const categories = fd.flatCategories(ledgerId);
   const accounts = fd.accounts(ledgerId);
   const items = result.items.map((it) => ({
@@ -47,12 +68,13 @@ router.post('/scan', auth.requireLogin, auth.requireLedgerWrite, api.asyncHandle
     kind: it.type === 'income' ? 'income' : 'expense',
   }));
   auth.audit(req, 'ai.scan', {
-    entity: 'attachment', entityId: saved[0]?.id || null, ledgerId,
+    entity: 'attachment', entityId: firstSaved?.id || null, ledgerId,
     detail: `${result.engine} 识别 ${items.length} 笔`,
   });
   api.ok(res, {
     engine: result.engine,
     model: result.model || null,
+    // images 与请求里的 images 按位对应（第 i 项就是第 i 张图），前端据此回写附件 id
     items, images: saved,
     warnings: result.warnings || [],
     autoSave: ai.getAiConfig().autoSave,
@@ -112,12 +134,29 @@ router.post('/chat', auth.requireLogin, auth.requireLedgerWrite, api.asyncHandle
   const images = Array.isArray(req.body.images) ? req.body.images.slice(0, 6) : [];
   const text = String(req.body.text || '').slice(0, 4000).trim();
   if (!images.length && !text) return api.badRequest(res, '说一句消费（如「午饭 35 元」）或发一张账单截图');
-  const saved = [];
-  for (const img of images) {
-    saved.push(await att.saveDataUrlImage({ dataUrl: img.dataUrl, ledgerId, userId: req.session.userId, name: img.name }));
+  // 与 /scan 同一套语义：带 id 的复用已存附件（不重复上传），不带 id 的新存
+  const saved = new Array(images.length).fill(null);
+  const modelImages = [];
+  for (let i = 0; i < images.length; i++) {
+    const img = images[i];
+    const id = Number(img.id) || 0;
+    let row = null;
+    let dataUrl = '';
+    if (id) {
+      const found = await att.readDataUrl(ledgerId, id);
+      if (found) { row = found.row; dataUrl = found.dataUrl; }
+    }
+    if (!row) {
+      if (!img.dataUrl) continue;
+      row = await att.saveDataUrlImage({ dataUrl: img.dataUrl, ledgerId, userId: req.session.userId, name: img.name });
+      dataUrl = img.dataUrl;
+    }
+    saved[i] = row;
+    modelImages.push(dataUrl);
   }
-  const result = await ai.analyzeBill({ images, text, ledgerId });
-  if (saved[0]) run('UPDATE attachments SET ai_status = ? WHERE id = ?', result.engine === 'llm' ? 'recognized' : 'rule', saved[0].id);
+  const result = await ai.analyzeBill({ images: modelImages, text, ledgerId });
+  const firstSaved = saved.find(Boolean);
+  if (firstSaved) run('UPDATE attachments SET ai_status = ? WHERE id = ?', result.engine === 'llm' ? 'recognized' : 'rule', firstSaved.id);
   const categories = fd.flatCategories(ledgerId);
   const accountList = fd.accounts(ledgerId);
   const fallbackAccountId = accountList.length ? Number(accountList[0].id) : null;
@@ -152,7 +191,7 @@ router.post('/chat', auth.requireLogin, auth.requireLedgerWrite, api.asyncHandle
       errors.push(`${it.merchant || it.note || '一笔'}：${e.message}`);
     }
   }
-  const linked = att.linkImagesToTxns({ ledgerId, imageIds: saved.map((s) => s.id), txnIds: created });
+  const linked = att.linkImagesToTxns({ ledgerId, imageIds: saved.filter(Boolean).map((s) => s.id), txnIds: created });
   auth.audit(req, 'ai.chat', { ledgerId, detail: `${result.engine} 识别 ${items.length} 笔，入库 ${created.length}` });
   api.ok(res, {
     engine: result.engine,

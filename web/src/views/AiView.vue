@@ -67,6 +67,10 @@ interface Shot {
   dataUrl: string
   name: string
   size: number
+  /** 图片内容 sha256 指纹：用于拦截完全相同的截图重复入列 */
+  fp?: string
+  /** 已保存到服务端的附件 id：识别失败后重试时带上它，服务器直接取图，不再重复上传 */
+  attachmentId?: number
 }
 const images = ref<Shot[]>([])
 const dragover = ref(false)
@@ -83,7 +87,23 @@ function readDataUrl(file: File): Promise<string> {
   })
 }
 
+/**
+ * 图片内容指纹：取 dataUrl 里 base64 部分的 sha256。
+ * 用它在前端拦截「完全相同的截图」（同一张图重复粘贴/重复拖入）。
+ */
+async function fingerprint(dataUrl: string): Promise<string> {
+  const b64 = dataUrl.slice(dataUrl.indexOf(',') + 1)
+  const buf = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))
+  const digest = await crypto.subtle.digest('SHA-256', buf)
+  return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, '0')).join('')
+}
+
 async function addFiles(files: File[]) {
+  // 本次新增图片的指纹，用于拦截重复
+  const seen = new Set<string>()
+  for (const img of images.value) {
+    if (img.fp) seen.add(img.fp)
+  }
   for (const f of files) {
     if (!/^image\//.test(f.type)) {
       warning(`只支持图片文件：${f.name}`)
@@ -98,7 +118,14 @@ async function addFiles(files: File[]) {
       break
     }
     try {
-      images.value.push({ dataUrl: await readDataUrl(f), name: f.name, size: f.size })
+      const dataUrl = await readDataUrl(f)
+      const fp = await fingerprint(dataUrl)
+      if (seen.has(fp)) {
+        warning(`这张截图已经在列表里了：${f.name}`)
+        continue
+      }
+      seen.add(fp)
+      images.value.push({ dataUrl, name: f.name, size: f.size, fp })
     } catch (e: any) {
       warning(e?.message || '读取失败')
     }
@@ -280,8 +307,13 @@ async function doScan() {
   scanning.value = true
   saveHint.value = ''
   try {
+    // 带上已存过的附件 id：服务器直接取图，不再重复上传同一张账单
     const r = await AiApi.scan({
-      images: images.value.map((i) => ({ name: i.name, dataUrl: i.dataUrl })),
+      images: images.value.map((i) => ({
+        name: i.name,
+        dataUrl: i.dataUrl,
+        ...(i.attachmentId ? { id: i.attachmentId } : {}),
+      })),
       text: textInput.value,
     })
     scanMeta.value = {
@@ -291,6 +323,12 @@ async function doScan() {
     }
     // 截图 id 留档，确认入库时回传，附件才会挂到交易上
     lastImageIds.value = (r.images || []).map((i: any) => Number(i.id)).filter(Boolean)
+    // 回写到图片上：下次（识别失败重试）再点「开始识别」时只传 id，不重复上传
+    const returned = r.images || []
+    images.value.forEach((shot, idx) => {
+      const id = Number(returned[idx]?.id)
+      if (id) shot.attachmentId = id
+    })
     drafts.value = (r.items || []).map(toDraft)
     if (!drafts.value.length) {
       warning('没有识别出可记账的交易，可以换个更清晰的截图，或直接手动输入账单文字')

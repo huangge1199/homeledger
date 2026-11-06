@@ -18,6 +18,14 @@ export const api = axios.create({
  */
 export const IMPORT_TIMEOUT = 300_000
 
+/**
+ * AI 识别接口专用超时：视觉模型要先把图片完整传上去再推理，
+ * 多张截图时后端实测可达 40~60 秒（后端 ai.timeout_ms 默认 90 秒），
+ * 默认 30 秒会先于后端放弃，前端报「请求超时」而后端其实已识别完成。
+ * 这里取 120 秒，覆盖后端 90 秒上限并留出余量。
+ */
+export const AI_TIMEOUT = 120_000
+
 // CSRF：从 session store 拿（首屏后由 /api/v1/session 注入）
 const csrf = () => {
   const s = useSessionStore()

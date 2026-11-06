@@ -28,14 +28,31 @@ router.post('/api/ai/scan', auth.requireLogin, auth.requireLedgerWrite, async (r
     const text = String(req.body.text || '').slice(0, 4000);
     if (!images.length && !text) return res.status(400).json({ ok: false, error: '请上传账单截图或输入账单文字' });
 
-    const saved = [];
-    for (const img of images) {
-      saved.push(await att.saveDataUrlImage({ dataUrl: img.dataUrl, ledgerId, userId: req.session.userId, name: img.name }));
+    // 与 /api/v1/ai/scan 同一套语义：带 id 的复用已存附件，不带 id 的新存
+    const saved = new Array(images.length).fill(null);
+    const modelImages = [];
+    for (let i = 0; i < images.length; i++) {
+      const img = images[i];
+      const id = Number(img.id) || 0;
+      let row = null;
+      let dataUrl = '';
+      if (id) {
+        const found = await att.readDataUrl(ledgerId, id);
+        if (found) { row = found.row; dataUrl = found.dataUrl; }
+      }
+      if (!row) {
+        if (!img.dataUrl) continue;
+        row = await att.saveDataUrlImage({ dataUrl: img.dataUrl, ledgerId, userId: req.session.userId, name: img.name });
+        dataUrl = img.dataUrl;
+      }
+      saved[i] = row;
+      modelImages.push(dataUrl);
     }
 
-    const result = await ai.analyzeBill({ images, text, ledgerId });
+    const result = await ai.analyzeBill({ images: modelImages, text, ledgerId });
     // 把识别结果挂到第一张附件上，便于回溯
-    if (saved[0]) run('UPDATE attachments SET ai_status = ? WHERE id = ?', result.engine === 'llm' ? 'recognized' : 'rule', saved[0].id);
+    const firstSaved = saved.find(Boolean);
+    if (firstSaved) run('UPDATE attachments SET ai_status = ? WHERE id = ?', result.engine === 'llm' ? 'recognized' : 'rule', firstSaved.id);
 
     const categories = fd.flatCategories(ledgerId);
     const accounts = fd.accounts(ledgerId);
@@ -47,7 +64,7 @@ router.post('/api/ai/scan', auth.requireLogin, auth.requireLedgerWrite, async (r
     }));
 
     auth.audit(req, 'ai.scan', {
-      entity: 'attachment', entityId: saved[0]?.id || null, ledgerId,
+      entity: 'attachment', entityId: firstSaved?.id || null, ledgerId,
       detail: `${result.engine} 识别 ${items.length} 笔`,
     });
 
@@ -142,14 +159,30 @@ router.post('/api/ai/chat', auth.requireLogin, auth.requireLedgerWrite, async (r
       return res.status(400).json({ ok: false, code: 'empty', error: '说一句消费（如「午饭 35 元」）或发一张账单截图' });
     }
 
-    const saved = [];
-    for (const img of images) {
-      saved.push(await att.saveDataUrlImage({ dataUrl: img.dataUrl, ledgerId, userId: req.session.userId, name: img.name }));
+    // 与 /api/v1/ai/chat 同一套语义：带 id 的复用已存附件，不带 id 的新存
+    const saved = new Array(images.length).fill(null);
+    const modelImages = [];
+    for (let i = 0; i < images.length; i++) {
+      const img = images[i];
+      const id = Number(img.id) || 0;
+      let row = null;
+      let dataUrl = '';
+      if (id) {
+        const found = await att.readDataUrl(ledgerId, id);
+        if (found) { row = found.row; dataUrl = found.dataUrl; }
+      }
+      if (!row) {
+        if (!img.dataUrl) continue;
+        row = await att.saveDataUrlImage({ dataUrl: img.dataUrl, ledgerId, userId: req.session.userId, name: img.name });
+        dataUrl = img.dataUrl;
+      }
+      saved[i] = row;
+      modelImages.push(dataUrl);
     }
 
-    const result = await ai.analyzeBill({ images, text, ledgerId });
-    // 把识别结果挂到第一张附件上，便于回溯
-    if (saved[0]) run('UPDATE attachments SET ai_status = ? WHERE id = ?', result.engine === 'llm' ? 'recognized' : 'rule', saved[0].id);
+    const result = await ai.analyzeBill({ images: modelImages, text, ledgerId });
+    const firstSaved = saved.find(Boolean);
+    if (firstSaved) run('UPDATE attachments SET ai_status = ? WHERE id = ?', result.engine === 'llm' ? 'recognized' : 'rule', firstSaved.id);
 
     const categories = fd.flatCategories(ledgerId);
     const accountList = fd.accounts(ledgerId);
@@ -190,7 +223,7 @@ router.post('/api/ai/chat', auth.requireLogin, auth.requireLedgerWrite, async (r
     }
 
     // 附件关联：数量一致时一一对应，否则挂到第一笔
-    const linked = att.linkImagesToTxns({ ledgerId, imageIds: saved.map((s) => s.id), txnIds: created });
+    const linked = att.linkImagesToTxns({ ledgerId, imageIds: saved.filter(Boolean).map((s) => s.id), txnIds: created });
 
     auth.audit(req, 'ai.chat', {
       ledgerId, entity: 'transaction', entityId: created[0] || null,

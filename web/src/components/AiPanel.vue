@@ -59,12 +59,25 @@ function readImage(file: File) {
   })
 }
 
+/** 图片内容 sha256 指纹：用于拦截完全相同的截图重复入列 */
+async function fingerprint(dataUrl: string): Promise<string> {
+  const b64 = dataUrl.slice(dataUrl.indexOf(',') + 1)
+  const buf = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))
+  const digest = await crypto.subtle.digest('SHA-256', buf)
+  return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, '0')).join('')
+}
+
 async function onPick(e: Event) {
   const input = e.target as HTMLInputElement
+  const seen = new Set<string>()
   for (const f of Array.from(input.files || [])) {
     if (pending.value.length >= 6) break
     const dataUrl = await readImage(f)
-    if (dataUrl) pending.value.push({ dataUrl, name: f.name })
+    if (!dataUrl) continue
+    const fp = await fingerprint(dataUrl)
+    if (seen.has(fp)) continue
+    seen.add(fp)
+    pending.value.push({ dataUrl, name: f.name })
   }
   input.value = ''
 }

@@ -14,6 +14,7 @@
  * 两种存储方式共用同一套路径语义，切换驱动不用改数据。
  */
 const path = require('node:path');
+const crypto = require('node:crypto');
 const { all, get, run, nowStr, todayStr } = require('../db');
 const { uid } = require('./util');
 const storage = require('./storage');
@@ -56,25 +57,97 @@ function parseDataUrl(dataUrl) {
   return { mime, buf };
 }
 
+/** 图片内容 sha256（十六进制）：用来识别「是不是同一张图」 */
+function contentHash(buf) {
+  return crypto.createHash('sha256').update(buf).digest('hex');
+}
+
+/** DB 行 → 对外统一结构（前端/接口只认这几个字段） */
+function publicRow(row) {
+  if (!row) return null;
+  return {
+    id: Number(row.id),
+    rel: row.rel_path,
+    url: webUrl(row.rel_path),
+    size: row.size,
+    mime: row.mime,
+    file_name: row.file_name,
+  };
+}
+
+/**
+ * 找同账本下内容完全相同、且尚未关联交易的附件。
+ *
+ * 只复用「未关联」的：已入库的截图属于某笔交易，用户再传同一张图
+ * 通常是想记另一笔账，必须新建；而识别失败/未入库的残留附件
+ * （txn_id IS NULL）则是重试时该复用的那份。
+ */
+function findReusable(ledgerId, hash) {
+  if (!hash) return null;
+  return get(
+    `SELECT * FROM attachments
+     WHERE ledger_id = ? AND content_hash = ? AND txn_id IS NULL
+     ORDER BY id DESC LIMIT 1`,
+    Number(ledgerId),
+    hash
+  );
+}
+
 /**
  * 保存一张 dataURL 图片：写入存储 + 写 attachments 行（txn_id 先留空，记账成功后关联）
- * @returns {Promise<{id:number, rel:string, url:string, size:number, mime:string, file_name:string}>}
+ *
+ * 内容完全相同的图（识别失败后重试、或重复粘贴同一张截图）会复用已有附件：
+ * 不再重复写存储、不再重复插库，只把已有那行的 id 返回给调用方。
+ * @returns {Promise<{id:number, rel:string, url:string, size:number, mime:string, file_name:string, reused:boolean}>}
  */
 async function saveDataUrlImage({ dataUrl, ledgerId, userId, name, kind = 'screenshot', aiStatus = 'pending' }) {
   const { mime, buf } = parseDataUrl(dataUrl);
+  const hash = contentHash(buf);
+
+  // 已有同样内容的附件 → 直接复用（先确认文件还在，缺失则补写回去）
+  const reused = findReusable(ledgerId, hash);
+  if (reused) {
+    const stillThere = await storage.get(reused.rel_path);
+    if (stillThere) return { ...publicRow(reused), reused: true };
+    await storage.put(reused.rel_path, buf, mime);
+    return { ...publicRow(reused), reused: true };
+  }
+
   const ext = MIME_EXT[mime] || 'png';
   const ym = todayStr().slice(0, 4) + todayStr().slice(5, 7);
   const fileName = `${Date.now()}_${uid(8)}.${ext}`;
   const rel = `${ym}/${fileName}`;
   await storage.put(rel, buf, mime);
 
+  // 并发兜底：写文件期间另一个请求可能已经插了同样的行，
+  // 插库前再查一次，命中就丢掉刚写的文件复用它（此处到 INSERT 之间无 await，Node 单线程下是原子的）
+  const again = findReusable(ledgerId, hash);
+  if (again) {
+    await storage.del(rel);
+    return { ...publicRow(again), reused: true };
+  }
+
   const storedName = String(name || fileName).slice(0, 255);
   const info = run(
-    `INSERT INTO attachments (ledger_id, txn_id, user_id, kind, file_name, rel_path, mime, size, ai_status, created_at)
-     VALUES (?,NULL,?,?,?,?,?,?,?,?)`,
-    Number(ledgerId), Number(userId), kind, storedName, rel, mime, buf.length, aiStatus, nowStr()
+    `INSERT INTO attachments (ledger_id, txn_id, user_id, kind, file_name, rel_path, mime, size, ai_status, content_hash, created_at)
+     VALUES (?,NULL,?,?,?,?,?,?,?,?,?)`,
+    Number(ledgerId), Number(userId), kind, storedName, rel, mime, buf.length, aiStatus, hash, nowStr()
   );
-  return { id: Number(info.lastInsertRowid), rel, url: webUrl(rel), size: buf.length, mime, file_name: storedName };
+  return { ...publicRow({ id: info.lastInsertRowid, rel_path: rel, size: buf.length, mime, file_name: storedName }), reused: false };
+}
+
+/**
+ * 读回一张已保存附件的 dataURL。
+ * 识别失败后重试时用这个：前端不必再把图片传一遍，服务器直接从存储取。
+ * @returns {Promise<{dataUrl:string, row:object}|null>}
+ */
+async function readDataUrl(ledgerId, id) {
+  const row = get('SELECT * FROM attachments WHERE id = ? AND ledger_id = ?', Number(id), Number(ledgerId));
+  if (!row) return null;
+  const buf = await storage.get(row.rel_path);
+  if (!buf) return null;
+  const mime = row.mime && MIME_EXT[row.mime] ? row.mime : storage.mimeOf(row.rel_path);
+  return { dataUrl: `data:${mime};base64,${buf.toString('base64')}`, row: publicRow(row) };
 }
 
 /**
@@ -185,6 +258,7 @@ async function removeById(ledgerId, id) {
 module.exports = {
   MIME_EXT, MAX_IMAGE_BYTES, MAX_IMAGES,
   webUrl, parseDataUrl, safeMime,
+  contentHash, findReusable, readDataUrl,
   saveDataUrlImage, linkImagesToTxns,
   listByTxnIds, listByTxn, countByTxnIds, attachCounts,
   getById, openFile, removeById,

@@ -351,11 +351,14 @@ const MIGRATIONS = [
   { table: 'transactions', column: 'txn_time', ddl: 'TEXT' },
   { table: 'users', column: 'avatar_path', ddl: 'VARCHAR(255)' },
   { table: 'users', column: 'avatar_ver', ddl: 'BIGINT' },
+  // 图片内容哈希（sha256）：识别失败重试时用来识别「同一张图」，避免重复落盘
+  { table: 'attachments', column: 'content_hash', ddl: 'VARCHAR(64)' },
 ];
 
 /** 必须在建表/迁移之后创建的索引 */
 const EXTRA_INDEXES = [
   'CREATE INDEX IF NOT EXISTS idx_txn_subscription ON transactions(subscription_id);',
+  'CREATE INDEX IF NOT EXISTS idx_att_hash ON attachments(ledger_id, content_hash);',
 ];
 
 /** 无自增 id 主键的表（PostgreSQL 的 INSERT 不能为它们追加 RETURNING id） */
