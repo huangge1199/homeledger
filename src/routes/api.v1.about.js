@@ -16,6 +16,7 @@ const express = require('express');
 const { get, DATA_DIR, DB_FILE } = require('../db');
 const auth = require('../lib/auth');
 const api = require('../lib/api');
+const storage = require('../lib/storage');
 const about = require('../lib/about');
 
 const router = express.Router();
@@ -28,18 +29,6 @@ function safeSize(p) {
   try { return fs.statSync(p).size; } catch { return 0; }
 }
 
-function dirSize(dir) {
-  let total = 0;
-  try {
-    for (const f of fs.readdirSync(dir, { withFileTypes: true })) {
-      const p = path.join(dir, f.name);
-      if (f.isDirectory()) total += dirSize(p);
-      else { try { total += fs.statSync(p).size; } catch { /* ignore */ } }
-    }
-  } catch { /* ignore */ }
-  return total;
-}
-
 /** 字节数 → 人类可读（对齐老版 about.js 的 fmtSize） */
 function fmtSize(n) {
   if (n >= 1073741824) return (n / 1073741824).toFixed(2) + ' GB';
@@ -50,12 +39,12 @@ function fmtSize(n) {
 
 // 注意：本文件在 apiV1.js 中以 router.use('/about', ...) 挂载，
 // 前缀已被剥掉，这里必须挂 '/'，否则实际路径会变成 /api/v1/about/about 而 404。
-router.get('/', auth.requireLogin, api.asyncHandler((req, res) => {
+router.get('/', auth.requireLogin, api.asyncHandler(async (req, res) => {
   const isAdmin = !!(res.locals.user && res.locals.user.is_admin);
   const dialect = require('../db').dialect || 'sqlite';
   // SQLite 才有单文件可算体积；MySQL / PostgreSQL 的库在服务端，本地文件大小无意义
   const dbSize = dialect === 'sqlite' ? safeSize(DB_FILE) : 0;
-  const uploadsSize = dirSize(path.join(DATA_DIR, 'uploads'));
+  const uploadsSize = await storage.usage();
   const stats = {
     txns: Number(get('SELECT COUNT(*) AS c FROM transactions WHERE deleted_at IS NULL')?.c || 0),
     ledgers: Number(get('SELECT COUNT(*) AS c FROM ledgers')?.c || 0),
@@ -97,6 +86,7 @@ router.get('/', auth.requireLogin, api.asyncHandler((req, res) => {
       dataDir: DATA_DIR,
       uptime: Math.round(process.uptime()),
       tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      storage: storage.describe(),
     },
   });
 }));

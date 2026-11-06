@@ -127,7 +127,18 @@ start_process() {
     fi
 
     APP_DIR="${APP_BASE}/${PKG_NAME}"
-    CMD="env PORT=5111 HOST=0.0.0.0 DATA_DIR=${TRIM_PKGVAR}/data TZ=Asia/Shanghai \"${NODE_BIN}\" --no-warnings \"${APP_DIR}/server.js\""
+    # 默认配置写死在此；如需改数据库后端或把截图存到 S3 兼容对象存储（RustFS 等），
+    # 在数据目录放一个 .env 文件（如 ${TRIM_PKGVAR}/.env），内容与项目根目录 .env.example 同格式。
+    # 注意：node 的 --env-file 不会覆盖已存在的进程环境变量，所以 PORT/HOST/DATA_DIR/TZ
+    # 这几个内联的固定值优先级更高；.env 用来补它们之外的自定义项（STORAGE_DRIVER、S3_* 等）。
+    # 另外 .env 不能带 BOM，否则第一行变量会失效。
+    ENV_FILE="${TRIM_PKGVAR}/.env"
+    NODE_ARGS="--no-warnings"
+    if [ -f "${ENV_FILE}" ]; then
+        log_msg "using env file ${ENV_FILE}"
+        NODE_ARGS="--env-file=${ENV_FILE} ${NODE_ARGS}"
+    fi
+    CMD="env PORT=5111 HOST=0.0.0.0 DATA_DIR=${TRIM_PKGVAR}/data TZ=Asia/Shanghai \"${NODE_BIN}\" ${NODE_ARGS} \"${APP_DIR}/server.js\""
 
     mkdir -p "${TRIM_PKGVAR}/data"
     log_msg "APP_BASE=${APP_BASE} NODE_BIN=${NODE_BIN} ($(${NODE_BIN} -v 2>&1))"

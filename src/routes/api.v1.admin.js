@@ -10,28 +10,18 @@ const { all, get, run, tx, nowStr, todayStr, DATA_DIR, DB_FILE, setSetting, addL
 const auth = require('../lib/auth');
 const api = require('../lib/api');
 const ai = require('../lib/ai');
+const storage = require('../lib/storage');
 const importer = require('../lib/importers');
 const fd = require('../lib/formdata');
 const u = require('../lib/util');
 const txn = require('../lib/txn');
 
 function safeSize(p) { try { return fs.statSync(p).size; } catch { return 0; } }
-function dirSize(dir) {
-  let total = 0;
-  try {
-    for (const f of fs.readdirSync(dir, { withFileTypes: true })) {
-      const p = path.join(dir, f.name);
-      if (f.isDirectory()) total += dirSize(p);
-      else { try { total += fs.statSync(p).size; } catch { /* ignore */ } }
-    }
-  } catch { /* ignore */ }
-  return total;
-}
 
 function hashToken(plain) { return crypto.createHash('sha256').update(String(plain)).digest('hex'); }
 
 /* ============================================ 设置 ============================================ */
-router.get('/settings', auth.requireLogin, api.asyncHandler((req, res) => {
+router.get('/settings', auth.requireLogin, api.asyncHandler(async (req, res) => {
   const rawCfg = ai.getAiConfig();
   const isAdmin = !!res.locals.user.is_admin;
   const me = res.locals.user;
@@ -49,7 +39,7 @@ router.get('/settings', auth.requireLogin, api.asyncHandler((req, res) => {
         txns: Number(get('SELECT COUNT(*) AS c FROM transactions WHERE deleted_at IS NULL')?.c || 0),
         attachments: Number(get('SELECT COUNT(*) AS c FROM attachments')?.c || 0),
         dbSize: safeSize(DB_FILE),
-        uploadsSize: dirSize(path.join(DATA_DIR, 'uploads')),
+        uploadsSize: await storage.usage(),
       },
       // 动作/对象/详情按老版 util.js 的中文映射预格式化，前端直接渲染
       audits: all('SELECT a.*, u.display_name FROM audit_logs a LEFT JOIN users u ON u.id = a.user_id ORDER BY a.id DESC LIMIT 60')
@@ -98,6 +88,7 @@ router.get('/settings', auth.requireLogin, api.asyncHandler((req, res) => {
       dbSize: safeSize(DB_FILE),
       uptime: Math.round(process.uptime()),
       tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      storage: storage.describe(),
     },
   });
 }));
@@ -152,7 +143,6 @@ router.patch('/settings/profile', auth.requireLogin, api.asyncHandler((req, res)
   api.saved(res, '已更新');
 }));
 
-const AVATAR_DIR = () => path.join(DATA_DIR, 'uploads', 'avatars');
 function parseAvatarDataUrl(dataUrl) {
   const m = /^data:image\/([a-z+]+);base64,(.+)$/i.exec(String(dataUrl || ''));
   if (!m) return null;
@@ -167,25 +157,20 @@ function parseAvatarDataUrl(dataUrl) {
   else if (buf.subarray(0, 4).toString('ascii') === 'RIFF' && buf.subarray(8, 12).toString('ascii') === 'WEBP') ext = 'webp';
   return ext ? { buf, ext } : null;
 }
-function removeAvatarFile(avatarPath) {
-  if (!avatarPath) return;
-  try { fs.unlinkSync(path.join(AVATAR_DIR(), avatarPath)); } catch (e) { /* ignore */ }
-}
 
-router.post('/settings/avatar', auth.requireLogin, api.asyncHandler((req, res) => {
+router.post('/settings/avatar', auth.requireLogin, api.asyncHandler(async (req, res) => {
   const parsed = parseAvatarDataUrl(req.body.dataUrl);
   if (!parsed) return api.badRequest(res, '请上传 2MB 以内的 PNG/JPG/GIF/WebP 图片');
-  fs.mkdirSync(AVATAR_DIR(), { recursive: true });
   const name = `user-${req.session.userId}.${parsed.ext}`;
-  removeAvatarFile(res.locals.user.avatar_path);
-  fs.writeFileSync(path.join(AVATAR_DIR(), name), parsed.buf);
+  await storage.putAvatar(name, parsed.buf);
+  await storage.delAvatar(res.locals.user.avatar_path); // 扩展名可能变化，旧文件要清掉
   run('UPDATE users SET avatar_path = ?, avatar_ver = ? WHERE id = ?', name, Date.now(), req.session.userId);
   auth.audit(req, 'user.avatar_change', { entity: 'user', entityId: req.session.userId });
   api.saved(res, '已更新');
 }));
 
-router.post('/settings/avatar/clear', auth.requireLogin, api.asyncHandler((req, res) => {
-  removeAvatarFile(res.locals.user.avatar_path);
+router.post('/settings/avatar/clear', auth.requireLogin, api.asyncHandler(async (req, res) => {
+  await storage.delAvatar(res.locals.user.avatar_path);
   run('UPDATE users SET avatar_path = NULL, avatar_ver = NULL WHERE id = ?', req.session.userId);
   api.ok(res);
 }));
@@ -323,7 +308,7 @@ router.post('/ledgers/:id(\\d+)/archive', auth.requireLogin, api.asyncHandler((r
   api.ok(res, { archived: !l.is_archived });
 }));
 
-router.delete('/ledgers/:id(\\d+)', auth.requireLogin, api.asyncHandler((req, res) => {
+router.delete('/ledgers/:id(\\d+)', auth.requireLogin, api.asyncHandler(async (req, res) => {
   const id = Number(req.params.id);
   const l = get('SELECT * FROM ledgers WHERE id = ? AND owner_id = ?', id, req.session.userId);
   if (!l) return api.forbidden(res, '只有账本拥有者可以删除账本');
@@ -338,7 +323,7 @@ router.delete('/ledgers/:id(\\d+)', auth.requireLogin, api.asyncHandler((req, re
   }
   const files = [];
   tx(() => { files.push(...cascadeDeleteLedger(id)); });
-  cleanupUploadFiles(files);
+  await cleanupUploadFiles(files);
   auth.audit(req, 'ledger.delete', { entity: 'ledger', entityId: id });
   if (Number(req.session.ledgerId) === id) req.session.ledgerId = null;
   api.deleted(res, `账本「${l.name}」及其全部数据已删除`);
@@ -367,12 +352,7 @@ function cascadeDeleteLedger(id) {
   return files.map((f) => f.rel_path);
 }
 function cleanupUploadFiles(relPaths) {
-  const root = path.join(DATA_DIR, 'uploads');
-  for (const rel of relPaths || []) {
-    const abs = path.resolve(root, String(rel));
-    if (!abs.startsWith(path.resolve(root) + path.sep)) continue;
-    try { fs.unlinkSync(abs); } catch { /* ignore */ }
-  }
+  return Promise.all((relPaths || []).map((rel) => storage.del(rel).catch(() => {})));
 }
 
 /* ============================================ 成员 ============================================ */

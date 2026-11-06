@@ -11,11 +11,9 @@ const path = require('node:path');
 
 /* ------------------------------- 数据目录（共用） ------------------------------ */
 /* SQLite 数据库文件与账单截图附件都存这里；相对路径按项目根目录解析，
-   绝对路径原样使用（容器内 /data） */
-const RAW_DATA_DIR = process.env.DATA_DIR || 'data';
-const DATA_DIR = path.isAbsolute(RAW_DATA_DIR)
-  ? path.normalize(RAW_DATA_DIR)
-  : path.resolve(__dirname, '..', RAW_DATA_DIR);
+   绝对路径原样使用（容器内 /data）。
+   解析逻辑单独放在 lib/datarir.js，storage.js 等无需连数据库的模块也能复用。 */
+const { DATA_DIR } = require('./lib/datarir');
 const DB_FILE = path.join(DATA_DIR, 'homeledger.db');
 
 try {

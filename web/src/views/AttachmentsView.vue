@@ -3,7 +3,8 @@
  * 账单截图库（对齐老版 attachments.ejs）
  *
  * 老版行为基准：
- *   · 顶部一行：左「共 N 张截图，存放在 data/uploads 目录中」，右「＋ 上传新截图」按钮
+ *   · 顶部一行：左「共 N 张截图，存放在 <存储位置>」，右「＋ 上传新截图」按钮
+ *     存储位置由后端按 STORAGE_DRIVER 下发（本地磁盘目录 / 对象存储桶），前端不写死
  *   · 空态：🖼️「还没有上传过账单截图」+「去体验 AI 截图记账」入口
  *   · 画廊：图片（点击放大）+ 图注（金额 / 商家 / 日期·KB）+「查看记录」「删除」
  *   · 分页：每页 36 张
@@ -34,6 +35,8 @@ const list = ref<{ items: any[]; total: number; totalPages: number }>({
   total: 0,
   totalPages: 1,
 })
+// 附件实际存放位置（本地目录 / 对象存储），由后端按 STORAGE_DRIVER 下发
+const storageTarget = ref('')
 
 async function load() {
   loading.value = true
@@ -44,6 +47,7 @@ async function load() {
       total: Number(d.total || 0),
       totalPages: Number(d.totalPages || 1),
     }
+    storageTarget.value = String(d.storage?.target || '')
     // 页码越界（删完最后一条）时回退到有效页
     if (!list.value.items.length && page.value > 1 && list.value.totalPages < page.value) {
       page.value = list.value.totalPages
@@ -128,7 +132,7 @@ onMounted(load)
     <NCard :bordered="true">
       <div class="card-head">
         <span class="ch-title">
-          共 {{ list.total }} 张截图，存放在服务器的 data/uploads 目录中
+          共 {{ list.total }} 张截图，存放在{{ storageTarget || '服务器的 data/uploads 目录中' }}
         </span>
         <span class="muted small">
           <RouterLink to="/ai">＋ 上传新截图</RouterLink>

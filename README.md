@@ -97,6 +97,18 @@ cp .env.example .env
 #     DB_POSTGRES_USER=homeledger  DB_POSTGRES_PASSWORD=xxx  DB_POSTGRES_DATABASE=homeledger
 #   注意：同时启用多个会直接报错拒绝启动；MySQL / PG 需先自建数据库（字符集建议 utf8mb4）
 
+# 3.5 选择账单截图的存放位置（默认本地磁盘）
+#   本地（存到 DATA_DIR/uploads/，备份时拷 data 目录即可）：
+#     STORAGE_DRIVER=local
+#   S3 兼容对象存储（RustFS / MinIO / AWS S3）：
+#     STORAGE_DRIVER=s3
+#     S3_ENDPOINT=http://127.0.0.1:9000   # RustFS 的 S3 API 端口
+#     S3_ACCESS_KEY=xxx  S3_SECRET_KEY=xxx
+#     S3_BUCKET=homeledger  S3_PREFIX=uploads
+#   桶不存在时启动会自动创建；从本地切到 s3 可先跑迁移脚本：
+#     node scripts/migrate-uploads-to-s3.js --dry-run   # 先看清单
+#     node scripts/migrate-uploads-to-s3.js             # 确认后迁移
+
 # 4. 构建前端（产物在 web/dist）
 cd web && npm install && npm run build && cd ..
 
@@ -228,6 +240,7 @@ AI 截图/文本识别使用 OpenAI 兼容接口，在「设置 → AI 记账」
 ## 🔒 安全说明
 
 - SQLite 模式下所有数据存放在 `DATA_DIR`（默认项目内 `data/`，容器内 `/data`），备份 = 拷贝该目录；MySQL / PostgreSQL 模式请用数据库自带的备份工具
+- 账单截图的存放位置由 `STORAGE_DRIVER` 决定：`local` 放在 `DATA_DIR/uploads/`（随目录一起备份），`s3` 放在 S3 兼容对象存储（RustFS / MinIO / AWS S3）里，备份对象存储需要另行处理
 - 开放 API 令牌只存 SHA-256 摘要，可随时吊销；权限跟随账本成员关系；写操作全量审计
 - 建议仅在局域网/VPN 内暴露端口；如需公网访问，请置于反向代理之后并启用 HTTPS
 

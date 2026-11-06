@@ -10,6 +10,7 @@ const {
 } = require('../db');
 const auth = require('../lib/auth');
 const ai = require('../lib/ai');
+const storage = require('../lib/storage');
 const txn = require('../lib/txn');
 const importer = require('../lib/importers');
 const fd = require('../lib/formdata');
@@ -96,7 +97,6 @@ router.post('/settings/profile', auth.requireLogin, (req, res) => {
 
 /* ------------------------------ 自传头像 ------------------------------ */
 
-const AVATAR_DIR = () => path.join(DATA_DIR, 'uploads', 'avatars');
 const AVATAR_TYPES = { png: 'image/png', jpg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp' };
 
 /** 从 dataUrl 解析图片，嗅探真实格式（防止改扩展名伪装），非法返回 null */
@@ -117,26 +117,19 @@ function parseAvatarDataUrl(dataUrl) {
   return { buf, ext };
 }
 
-/** 删除旧头像文件（扩展名可能变化） */
-function removeAvatarFile(avatarPath) {
-  if (!avatarPath) return;
-  try { fs.unlinkSync(path.join(AVATAR_DIR(), avatarPath)); } catch (e) { /* 文件已不存在则忽略 */ }
-}
-
-router.post('/settings/avatar', auth.requireLogin, (req, res) => {
+router.post('/settings/avatar', auth.requireLogin, async (req, res) => {
   const parsed = parseAvatarDataUrl(req.body.dataUrl);
   if (!parsed) { res.status(400).json({ ok: false, error: '请上传 2MB 以内的 PNG/JPG/GIF/WebP 图片' }); return; }
-  fs.mkdirSync(AVATAR_DIR(), { recursive: true });
   const name = `user-${req.session.userId}.${parsed.ext}`;
-  removeAvatarFile(res.locals.user.avatar_path);
-  fs.writeFileSync(path.join(AVATAR_DIR(), name), parsed.buf);
+  await storage.putAvatar(name, parsed.buf);
+  await storage.delAvatar(res.locals.user.avatar_path); // 扩展名可能变化，旧文件要清掉
   run('UPDATE users SET avatar_path = ?, avatar_ver = ? WHERE id = ?', name, Date.now(), req.session.userId);
   auth.audit(req, 'user.avatar_change', { entity: 'user', entityId: req.session.userId });
   res.json({ ok: true });
 });
 
-router.post('/settings/avatar/clear', auth.requireLogin, (req, res) => {
-  removeAvatarFile(res.locals.user.avatar_path);
+router.post('/settings/avatar/clear', auth.requireLogin, async (req, res) => {
+  await storage.delAvatar(res.locals.user.avatar_path);
   run('UPDATE users SET avatar_path = NULL, avatar_ver = NULL WHERE id = ?', req.session.userId);
   res.json({ ok: true });
 });
@@ -324,17 +317,14 @@ function deleteLedgerCascade(id) {
   return files.map((f) => f.rel_path);
 }
 
-/** 尽力清理附件磁盘文件（失败忽略：文件可能已被手工删除） */
-function cleanupUploadFiles(relPaths) {
-  const root = path.join(DATA_DIR, 'uploads');
+/** 尽力清理附件文件（失败忽略：文件可能已被手工删除） */
+async function cleanupUploadFiles(relPaths) {
   for (const rel of relPaths || []) {
-    const abs = path.resolve(root, String(rel));
-    if (!abs.startsWith(path.resolve(root) + path.sep)) continue;
-    try { fs.unlinkSync(abs); } catch { /* ignore */ }
+    try { await storage.del(rel); } catch { /* ignore */ }
   }
 }
 
-router.post('/ledgers/:id/delete', auth.requireLogin, (req, res) => {
+router.post('/ledgers/:id/delete', auth.requireLogin, async (req, res) => {
   const id = Number(req.params.id);
   const l = get('SELECT * FROM ledgers WHERE id = ? AND owner_id = ?', id, req.session.userId);
   if (!l) { res.flash('error', '只有账本拥有者可以删除账本'); return res.redirect('/ledgers'); }
@@ -350,7 +340,7 @@ router.post('/ledgers/:id/delete', auth.requireLogin, (req, res) => {
   }
   let files = [];
   tx(() => { files = deleteLedgerCascade(id); });
-  cleanupUploadFiles(files);
+  await cleanupUploadFiles(files);
   auth.audit(req, 'ledger.delete', { entity: 'ledger', entityId: id, detail: l.name });
   if (Number(req.session.ledgerId) === id) req.session.ledgerId = null;
   res.flash('success', `账本「${l.name}」及其全部数据已删除`);
@@ -702,18 +692,6 @@ router.post('/backup/restore', auth.requireLogin, auth.requireAdmin, (req, res) 
 router.get('/admin', auth.requireLogin, auth.requireAdmin, (req, res) => {
   res.redirect('/settings#admin');
 });
-
-function dirSize(dir) {
-  let total = 0;
-  try {
-    for (const f of fs.readdirSync(dir, { withFileTypes: true })) {
-      const p = path.join(dir, f.name);
-      if (f.isDirectory()) total += dirSize(p);
-      else { try { total += fs.statSync(p).size; } catch { /* ignore */ } }
-    }
-  } catch { /* ignore */ }
-  return total;
-}
 
 router.post('/admin/users/:id', auth.requireLogin, auth.requireAdmin, (req, res) => {
   const id = Number(req.params.id);

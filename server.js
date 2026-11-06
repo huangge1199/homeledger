@@ -12,6 +12,7 @@ const session = require('express-session');
 const db = require('./src/db');
 const auth = require('./src/lib/auth');
 const scheduler = require('./src/lib/scheduler');
+const storage = require('./src/lib/storage');
 const util = require('./src/lib/util');
 
 const PORT = Number(process.env.PORT || 5111);
@@ -22,6 +23,9 @@ const ROOT = __dirname;
 
 db.init();
 bootstrapAdmin();
+// 附件存储自检（S3 模式下确认桶存在，不存在则自动创建）。
+// 失败只告警不阻断启动，init 内部已兜住异常。
+storage.init();
 
 /** 首次启动且库中无任何用户时，按环境变量自动创建管理员 */
 function bootstrapAdmin() {
@@ -52,12 +56,32 @@ app.set('trust proxy', true);
 app.use(express.urlencoded({ extended: false, limit: '30mb' }));
 app.use(express.json({ limit: '30mb' }));
 app.use('/static', express.static(path.join(ROOT, 'public'), { maxAge: '7d' }));
-// SVG 可内嵌脚本：上传侧已禁止，历史遗留的 .svg 附件也一律不再回显
 app.use('/uploads', (req, res, next) => {
+  // SVG 可内嵌脚本：上传侧已禁止，历史遗留的 .svg 附件也一律不再回显
   if (/\.svg$/i.test(req.path || '')) return res.status(403).end('Forbidden');
   next();
 });
-app.use('/uploads', express.static(path.join(db.DATA_DIR, 'uploads'), { maxAge: '30d' }));
+if (storage.isS3()) {
+  // S3 驱动：附件不在本地磁盘，改由这里从对象存储读取后回源下发
+  app.use('/uploads', async (req, res, next) => {
+    if (req.method !== 'GET' && req.method !== 'HEAD') return next();
+    const rel = decodeURIComponent(req.path || '').replace(/^\/+/, '');
+    if (!rel) return res.status(404).end('Not Found');
+    try {
+      const stream = await storage.getStream(rel);
+      if (!stream) return res.status(404).end('Not Found');
+      res.type(storage.mimeOf(rel));
+      res.setHeader('Cache-Control', 'public, max-age=2592000');
+      stream.on('error', () => { if (!res.headersSent) res.status(404).end('Not Found'); else res.end(); });
+      stream.pipe(res);
+    } catch (e) {
+      console.error('[uploads]', e);
+      if (!res.headersSent) res.status(500).end('Internal Error');
+    }
+  });
+} else {
+  app.use('/uploads', express.static(path.join(db.DATA_DIR, 'uploads'), { maxAge: '30d' }));
+}
 
 /* ---------- v2 前端构建产物（web/dist） ----------
  * 阶段 0：仅提供静态文件 + SPA fallback。

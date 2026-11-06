@@ -30,7 +30,7 @@ router.post('/api/ai/scan', auth.requireLogin, auth.requireLedgerWrite, async (r
 
     const saved = [];
     for (const img of images) {
-      saved.push(att.saveDataUrlImage({ dataUrl: img.dataUrl, ledgerId, userId: req.session.userId, name: img.name }));
+      saved.push(await att.saveDataUrlImage({ dataUrl: img.dataUrl, ledgerId, userId: req.session.userId, name: img.name }));
     }
 
     const result = await ai.analyzeBill({ images, text, ledgerId });
@@ -144,10 +144,11 @@ router.post('/api/ai/chat', auth.requireLogin, auth.requireLedgerWrite, async (r
 
     const saved = [];
     for (const img of images) {
-      saved.push(att.saveDataUrlImage({ dataUrl: img.dataUrl, ledgerId, userId: req.session.userId, name: img.name }));
+      saved.push(await att.saveDataUrlImage({ dataUrl: img.dataUrl, ledgerId, userId: req.session.userId, name: img.name }));
     }
 
     const result = await ai.analyzeBill({ images, text, ledgerId });
+    // 把识别结果挂到第一张附件上，便于回溯
     if (saved[0]) run('UPDATE attachments SET ai_status = ? WHERE id = ?', result.engine === 'llm' ? 'recognized' : 'rule', saved[0].id);
 
     const categories = fd.flatCategories(ledgerId);
@@ -220,9 +221,9 @@ router.get('/attachments', auth.requireLogin, (req, res, next) => {
   next();
 });
 
-router.post('/attachments/:id/delete', auth.requireLogin, auth.requireLedgerWrite, (req, res) => {
+router.post('/attachments/:id/delete', auth.requireLogin, auth.requireLedgerWrite, async (req, res) => {
   const ledgerId = Number(res.locals.ledger.id);
-  if (att.removeById(ledgerId, req.params.id)) {
+  if (await att.removeById(ledgerId, req.params.id)) {
     auth.audit(req, 'attachment.delete', { ledgerId, entity: 'attachment', entityId: Number(req.params.id) });
   }
   if (req.body._json === '1') return res.json({ ok: true });

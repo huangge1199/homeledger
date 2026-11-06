@@ -9,6 +9,7 @@ const ai = require('../lib/ai');
 const txn = require('../lib/txn');
 const fd = require('../lib/formdata');
 const att = require('../lib/attachments');
+const storage = require('../lib/storage');
 
 router.get('/config', auth.requireLogin, api.asyncHandler((req, res) => {
   // 只回传页面需要的字段：apiKey 属敏感信息，不下发到浏览器
@@ -33,7 +34,7 @@ router.post('/scan', auth.requireLogin, auth.requireLedgerWrite, api.asyncHandle
   if (!images.length && !text) return api.badRequest(res, '请上传账单截图或输入账单文字');
   const saved = [];
   for (const img of images) {
-    saved.push(att.saveDataUrlImage({ dataUrl: img.dataUrl, ledgerId, userId: req.session.userId, name: img.name }));
+    saved.push(await att.saveDataUrlImage({ dataUrl: img.dataUrl, ledgerId, userId: req.session.userId, name: img.name }));
   }
   const result = await ai.analyzeBill({ images, text, ledgerId });
   if (saved[0]) run('UPDATE attachments SET ai_status = ? WHERE id = ?', result.engine === 'llm' ? 'recognized' : 'rule', saved[0].id);
@@ -113,7 +114,7 @@ router.post('/chat', auth.requireLogin, auth.requireLedgerWrite, api.asyncHandle
   if (!images.length && !text) return api.badRequest(res, '说一句消费（如「午饭 35 元」）或发一张账单截图');
   const saved = [];
   for (const img of images) {
-    saved.push(att.saveDataUrlImage({ dataUrl: img.dataUrl, ledgerId, userId: req.session.userId, name: img.name }));
+    saved.push(await att.saveDataUrlImage({ dataUrl: img.dataUrl, ledgerId, userId: req.session.userId, name: img.name }));
   }
   const result = await ai.analyzeBill({ images, text, ledgerId });
   if (saved[0]) run('UPDATE attachments SET ai_status = ? WHERE id = ?', result.engine === 'llm' ? 'recognized' : 'rule', saved[0].id);
@@ -178,12 +179,16 @@ router.get('/attachments', auth.requireLogin, api.asyncHandler((req, res) => {
     ledgerId, pageSize, (page - 1) * pageSize);
   // 补静态访问地址，前端可直接 <img src>
   for (const r of rows) r.url = att.webUrl(r.rel_path);
-  api.ok(res, { items: rows, page, total, pageSize, totalPages: Math.max(1, Math.ceil(total / pageSize)) });
+  api.ok(res, {
+    items: rows, page, total, pageSize, totalPages: Math.max(1, Math.ceil(total / pageSize)),
+    // 附件实际存放位置（本地目录 / 对象存储），前端据此显示文案
+    storage: storage.describe(),
+  });
 }));
 
-router.delete('/attachments/:id(\\d+)', auth.requireLogin, auth.requireLedgerWrite, api.asyncHandler((req, res) => {
+router.delete('/attachments/:id(\\d+)', auth.requireLogin, auth.requireLedgerWrite, api.asyncHandler(async (req, res) => {
   const ledgerId = Number(res.locals.ledger.id);
-  const ok = att.removeById(ledgerId, Number(req.params.id));
+  const ok = await att.removeById(ledgerId, Number(req.params.id));
   if (ok) auth.audit(req, 'attachment.delete', { ledgerId, entity: 'attachment', entityId: Number(req.params.id) });
   api.ok(res, { removed: ok });
 }));

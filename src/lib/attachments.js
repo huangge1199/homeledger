@@ -9,13 +9,14 @@
  *   · 网页端  POST /api/ai/scan  → POST /api/ai/confirm
  *   · 开放 API POST /api/open/ai/bill（小龙虾等）
  *
- * 存储：文件落在 DATA_DIR/uploads/YYYYMM/，库里只记相对路径；
- * 备份时 data 目录整体拷贝即可，图片与记录不会脱节。
+ * 存储：由 src/lib/storage.js 决定放哪（本地 DATA_DIR/uploads 或 S3 兼容对象存储 RustFS）。
+ * 库里 attachments.rel_path 只记「相对 uploads 根目录的路径」（如 202601/xxx.png），
+ * 两种存储方式共用同一套路径语义，切换驱动不用改数据。
  */
-const fs = require('node:fs');
 const path = require('node:path');
-const { all, get, run, nowStr, todayStr, DATA_DIR } = require('../db');
+const { all, get, run, nowStr, todayStr } = require('../db');
 const { uid } = require('./util');
+const storage = require('./storage');
 
 const MIME_EXT = {
   'image/png': 'png',
@@ -32,9 +33,7 @@ const MIME_EXT = {
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024; // 单张 8MB
 const MAX_IMAGES = 6;
 
-const uploadsRoot = () => path.join(DATA_DIR, 'uploads');
-
-/** 附件在网页端的访问地址 */
+/** 附件在网页端的访问地址（统一走 /uploads，由 server.js 按存储驱动分流下发） */
 const webUrl = (rel) => `/uploads/${String(rel).split(path.sep).join('/')}`;
 
 /**
@@ -58,20 +57,17 @@ function parseDataUrl(dataUrl) {
 }
 
 /**
- * 保存一张 dataURL 图片：落盘 + 写 attachments 行（txn_id 先留空，记账成功后关联）
- * @returns {{id:number, rel:string, url:string, size:number, mime:string, file_name:string}}
+ * 保存一张 dataURL 图片：写入存储 + 写 attachments 行（txn_id 先留空，记账成功后关联）
+ * @returns {Promise<{id:number, rel:string, url:string, size:number, mime:string, file_name:string}>}
  */
-function saveDataUrlImage({ dataUrl, ledgerId, userId, name, kind = 'screenshot', aiStatus = 'pending' }) {
+async function saveDataUrlImage({ dataUrl, ledgerId, userId, name, kind = 'screenshot', aiStatus = 'pending' }) {
   const { mime, buf } = parseDataUrl(dataUrl);
   const ext = MIME_EXT[mime] || 'png';
   const ym = todayStr().slice(0, 4) + todayStr().slice(5, 7);
-  const dir = path.join(uploadsRoot(), ym);
-  fs.mkdirSync(dir, { recursive: true });
   const fileName = `${Date.now()}_${uid(8)}.${ext}`;
-  const abs = path.join(dir, fileName);
-  fs.writeFileSync(abs, buf);
+  const rel = `${ym}/${fileName}`;
+  await storage.put(rel, buf, mime);
 
-  const rel = path.relative(uploadsRoot(), abs).split(path.sep).join('/');
   const storedName = String(name || fileName).slice(0, 255);
   const info = run(
     `INSERT INTO attachments (ledger_id, txn_id, user_id, kind, file_name, rel_path, mime, size, ai_status, created_at)
@@ -159,15 +155,16 @@ function getById(ledgerId, id) {
   return row || null;
 }
 
-/** 取附件的磁盘路径（做目录穿越校验），文件不存在返回 null */
-function resolveFile(ledgerId, id) {
+/**
+ * 打开附件内容流（做目录穿越校验），文件不存在返回 null
+ * @returns {Promise<{stream:Readable, row:object}|null>}
+ */
+async function openFile(ledgerId, id) {
   const row = getById(ledgerId, id);
   if (!row) return null;
-  const root = path.resolve(uploadsRoot());
-  const abs = path.resolve(root, String(row.rel_path));
-  if (abs !== root && !abs.startsWith(root + path.sep)) return null;
-  if (!fs.existsSync(abs)) return null;
-  return { abs, row };
+  const stream = await storage.getStream(row.rel_path);
+  if (!stream) return null;
+  return { stream, row };
 }
 
 /** 附件回显时的安全 Content-Type：库里记录的 mime 只允许位图白名单，其余按二进制流下发 */
@@ -177,22 +174,18 @@ function safeMime(mime) {
 }
 
 /** 删除附件：先删文件再删行 */
-function removeById(ledgerId, id) {
+async function removeById(ledgerId, id) {
   const row = get('SELECT * FROM attachments WHERE id = ? AND ledger_id = ?', Number(id), Number(ledgerId));
   if (!row) return false;
-  const root = path.resolve(uploadsRoot());
-  const abs = path.resolve(root, String(row.rel_path));
-  if (abs.startsWith(root + path.sep)) {
-    try { fs.unlinkSync(abs); } catch { /* 文件可能已被手工删除 */ }
-  }
+  try { await storage.del(row.rel_path); } catch { /* 文件可能已被手工删除 */ }
   run('DELETE FROM attachments WHERE id = ?', row.id);
   return true;
 }
 
 module.exports = {
   MIME_EXT, MAX_IMAGE_BYTES, MAX_IMAGES,
-  uploadsRoot, webUrl, parseDataUrl, safeMime,
+  webUrl, parseDataUrl, safeMime,
   saveDataUrlImage, linkImagesToTxns,
   listByTxnIds, listByTxn, countByTxnIds, attachCounts,
-  getById, resolveFile, removeById,
+  getById, openFile, removeById,
 };

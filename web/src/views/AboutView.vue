@@ -298,6 +298,9 @@ function reloadPage() {
           <NDescriptionsItem label="数据目录" :span="2">
             <code class="wrap">{{ env.dataDir }}</code>
           </NDescriptionsItem>
+          <NDescriptionsItem label="附件存储" :span="2">
+            <code class="wrap">{{ env.storage?.target || '—' }}</code>
+          </NDescriptionsItem>
         </NDescriptions>
       </NCard>
 

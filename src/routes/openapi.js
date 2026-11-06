@@ -268,7 +268,7 @@ router.get('/transactions/recent', (req, res) => {
     count: rows.length,
     transactions: rows.map((r) => ({
       ...r,
-      images: (imgMap.get(Number(r.id)) || []).map((i) => ({ id: i.id, path: `/uploads/${i.rel_path}`, size: i.size })),
+      images: (imgMap.get(Number(r.id)) || []).map((i) => ({ id: i.id, path: att.webUrl(i.rel_path), size: i.size })),
     })),
   });
 });
@@ -308,7 +308,7 @@ router.get('/transactions', (req, res) => {
       member: t.member_name, tags: t.tag_names, status: t.status,
       is_reimbursable: !!t.is_reimbursable, reimbursed_at: t.reimbursed_at,
       source: t.source, attachment_count: t.attachment_count || 0,
-      images: (imgMap.get(Number(t.id)) || []).map((i) => ({ id: i.id, path: `/uploads/${i.rel_path}`, size: i.size })),
+      images: (imgMap.get(Number(t.id)) || []).map((i) => ({ id: i.id, path: att.webUrl(i.rel_path), size: i.size })),
     })),
   });
 });
@@ -318,7 +318,7 @@ router.get('/transactions/:id', (req, res) => {
   const t = txn.getTransaction(Number(req.params.id), ledgerId);
   if (!t) return bad(res, 404, '记录不存在');
   ok(res, {
-    transaction: { ...t, images: att.listByTxn(t.id).map((i) => ({ id: i.id, path: `/uploads/${i.rel_path}`, size: i.size })), splits: txn.splitsOf(t.id) },
+    transaction: { ...t, images: att.listByTxn(t.id).map((i) => ({ id: i.id, path: att.webUrl(i.rel_path), size: i.size })), splits: txn.splitsOf(t.id) },
   });
 });
 
@@ -617,7 +617,7 @@ router.post('/ai/bill', requireWrite, async (req, res) => {
     if (wantSave) {
       for (const img of images) {
         try {
-          savedImages.push(att.saveDataUrlImage({ dataUrl: img.dataUrl, ledgerId, userId }));
+          savedImages.push(await att.saveDataUrlImage({ dataUrl: img.dataUrl, ledgerId, userId }));
         } catch (e) {
           saveWarnings.push(`有图片保存失败（${e.message}），识别继续。`);
         }
@@ -631,7 +631,7 @@ router.post('/ai/bill', requireWrite, async (req, res) => {
       return ok(res, {
         engine: result.engine, model: result.model || null,
         warnings, drafts: result.items, confirmed: false,
-        images: savedImages.map((s) => ({ id: s.id, path: `/uploads/${s.rel}`, size: s.size, txn_id: null })),
+        images: savedImages.map((s) => ({ id: s.id, path: att.webUrl(s.rel), size: s.size, txn_id: null })),
         hint: '检查 drafts 无误后，用 confirm=true 重新调用即可直接入库（图片会随记录一起保存并关联）',
       });
     }
@@ -677,7 +677,7 @@ router.post('/ai/bill', requireWrite, async (req, res) => {
       warnings, accounts_created: createdAccounts,
       confirmed: true, created: created.length, ids: created, errors,
       images: savedImages.map((s) => ({
-        id: s.id, path: `/uploads/${s.rel}`, size: s.size,
+        id: s.id, path: att.webUrl(s.rel), size: s.size,
         txn_id: (linked.find((l) => l.image_id === s.id) || {}).txn_id ?? null,
       })),
     });
@@ -689,13 +689,19 @@ router.post('/ai/bill', requireWrite, async (req, res) => {
 /* ---------------------------- 记录 / 截图回查 ----------------------------- */
 
 /** 取回某张账单截图（需令牌；网页端 /uploads/<rel_path> 同样可直接访问） */
-router.get('/attachments/:id', (req, res) => {
+router.get('/attachments/:id', async (req, res) => {
   const { ledgerId } = req.openAuth;
-  const found = att.resolveFile(ledgerId, req.params.id);
+  let found;
+  try {
+    found = await att.openFile(ledgerId, req.params.id);
+  } catch (e) {
+    return bad(res, 500, e.message);
+  }
   if (!found) return bad(res, 404, '截图不存在');
   res.type(att.safeMime(found.row.mime));
   res.setHeader('Cache-Control', 'private, max-age=86400');
-  res.sendFile(found.abs);
+  found.stream.on('error', () => { if (!res.headersSent) res.status(404).end(); else res.end(); });
+  found.stream.pipe(res);
 });
 
 /* --------------------------------- 账户管理 -------------------------------- */
