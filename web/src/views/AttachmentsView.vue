@@ -86,8 +86,29 @@ const pageNumbers = computed<(number | 'gap')[]>(() => {
 })
 
 /* --------------------------------- 图注 ---------------------------------- */
-/** 老版：有关联金额显示金额；否则规则引擎识别显示「规则解析」，其余显示「未关联记录」 */
+/**
+ * 一张截图可能关联多条明细（截图里有多笔消费）。
+ * 有多笔时图注显示「N 笔 · 合计 ¥X」，单笔时保持原来的显示。
+ */
+function linkedTxns(a: any): any[] {
+  return Array.isArray(a.linked_txns) ? a.linked_txns : []
+}
+
+function linkedTotal(a: any): number {
+  return linkedTxns(a).reduce((s, t) => s + (Number(t.amount_cents) || 0), 0)
+}
+
+/** 多笔关联时，商家名汇总（去重后取前两个） */
+function merchantSummary(a: any): string {
+  const names = [...new Set(linkedTxns(a).map((t) => t.merchant || t.note).filter(Boolean))]
+  if (!names.length) return '—'
+  return names.length > 2 ? `${names.slice(0, 2).join('、')} 等 ${names.length} 项` : names.join('、')
+}
+
 function captionTitle(a: any) {
+  const list = linkedTxns(a)
+  if (list.length > 1) return `${list.length} 笔 · 合计 ${fmtPlain(linkedTotal(a))}`
+  if (list.length === 1) return fmtPlain(Number(list[0].amount_cents) || 0)
   if (a.amount_cents !== null && a.amount_cents !== undefined) return fmtPlain(a.amount_cents)
   return a.ai_status === 'rule' ? '规则解析' : '未关联记录'
 }
@@ -164,11 +185,16 @@ onMounted(load)
             />
             <figcaption>
               <b>{{ captionTitle(a) }}</b>
-              <div class="row-line">{{ a.merchant || '—' }}</div>
+              <div class="row-line">{{ linkedTxns(a).length > 1 ? merchantSummary(a) : (a.merchant || '—') }}</div>
               <div class="tiny">{{ fmtDate(a.created_at) }} · {{ fmtSize(a.size) }}</div>
               <div class="ops">
                 <RouterLink
-                  v-if="a.linked_txn_id"
+                  v-if="linkedTxns(a).length > 1"
+                  :to="`/transactions/${linkedTxns(a)[0].id}`"
+                  class="tiny"
+                >查看 {{ linkedTxns(a).length }} 笔</RouterLink>
+                <RouterLink
+                  v-else-if="a.linked_txn_id"
                   :to="`/transactions/${a.linked_txn_id}`"
                   class="tiny"
                 >查看记录</RouterLink>

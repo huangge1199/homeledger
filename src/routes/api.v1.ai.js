@@ -218,6 +218,30 @@ router.get('/attachments', auth.requireLogin, api.asyncHandler((req, res) => {
     ledgerId, pageSize, (page - 1) * pageSize);
   // 补静态访问地址，前端可直接 <img src>
   for (const r of rows) r.url = att.webUrl(r.rel_path);
+  // 一张截图可能关联多条明细（截图里有多笔消费）：附上全部关联明细
+  const ids = rows.map((r) => Number(r.id));
+  const linked = new Map();
+  if (ids.length) {
+    const ph = ids.map(() => '?').join(',');
+    const links = all(
+      `SELECT x.attachment_id, t.id, t.amount_cents, t.txn_date, t.merchant, t.note,
+              t.type, t.deleted_at
+       FROM attachment_txns x
+       JOIN transactions t ON t.id = x.txn_id
+       WHERE x.attachment_id IN (${ph}) AND t.deleted_at IS NULL
+       ORDER BY t.id`,
+      ...ids
+    );
+    for (const l of links) {
+      const k = Number(l.attachment_id);
+      if (!linked.has(k)) linked.set(k, []);
+      linked.get(k).push({
+        id: Number(l.id), amount_cents: l.amount_cents, txn_date: l.txn_date,
+        merchant: l.merchant, note: l.note, type: l.type,
+      });
+    }
+  }
+  for (const r of rows) r.linked_txns = linked.get(Number(r.id)) || [];
   api.ok(res, {
     items: rows, page, total, pageSize, totalPages: Math.max(1, Math.ceil(total / pageSize)),
     // 附件实际存放位置（本地目录 / 对象存储），前端据此显示文案

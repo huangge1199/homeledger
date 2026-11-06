@@ -182,6 +182,15 @@ CREATE TABLE IF NOT EXISTS attachments (
 );
 CREATE INDEX IF NOT EXISTS idx_att_txn ON attachments(txn_id);
 
+CREATE TABLE IF NOT EXISTS attachment_txns (
+  attachment_id INTEGER NOT NULL,
+  txn_id       INTEGER NOT NULL,
+  created_at   VARCHAR(32) NOT NULL,
+  UNIQUE(attachment_id, txn_id)
+);
+CREATE INDEX IF NOT EXISTS idx_attx_txn ON attachment_txns(txn_id);
+CREATE INDEX IF NOT EXISTS idx_attx_att ON attachment_txns(attachment_id);
+
 CREATE TABLE IF NOT EXISTS budgets (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   ledger_id   INTEGER NOT NULL,
@@ -362,6 +371,6 @@ const EXTRA_INDEXES = [
 ];
 
 /** 无自增 id 主键的表（PostgreSQL 的 INSERT 不能为它们追加 RETURNING id） */
-const TABLES_WITHOUT_ID = new Set(['sessions', 'settings', 'transaction_tags']);
+const TABLES_WITHOUT_ID = new Set(['sessions', 'settings', 'transaction_tags', 'attachment_txns']);
 
 module.exports = { SCHEMA_DDL, MIGRATIONS, EXTRA_INDEXES, TABLES_WITHOUT_ID };

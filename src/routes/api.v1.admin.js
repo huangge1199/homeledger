@@ -335,6 +335,7 @@ function cascadeDeleteLedger(id) {
   for (const tid of ids) run('DELETE FROM transaction_tags WHERE transaction_id = ?', tid);
   run('DELETE FROM splits WHERE ledger_id = ?', id);
   run('DELETE FROM transactions WHERE ledger_id = ?', id);
+  run('DELETE FROM attachment_txns WHERE attachment_id IN (SELECT id FROM attachments WHERE ledger_id = ?)', id);
   run('DELETE FROM attachments WHERE ledger_id = ?', id);
   run('DELETE FROM accounts WHERE ledger_id = ?', id);
   run('DELETE FROM budgets WHERE ledger_id = ?', id);

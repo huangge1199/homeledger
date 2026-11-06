@@ -152,7 +152,13 @@ async function readDataUrl(ledgerId, id) {
 
 /**
  * 把附件关联到交易。
- * 数量一致时一一对应（一图一笔），否则全部挂到第一笔（一组图说明一笔账）。
+ *
+ * 一张截图里往往有多笔消费，所以同一张图要挂到多条明细上：
+ *   · 图与笔数一致 —— 一一对应（一图一笔）
+ *   · 图比笔少   —— 每张图挂到全部笔（这张截图就是这几笔的凭证）
+ *   · 图比笔多   —— 按顺序轮流挂（多张截图对应多笔，取第 i 张配第 i 笔，多的挂第一笔）
+ *
+ * attachments.txn_id 记主关联（第一笔），完整关系写在 attachment_txns。
  * @returns {Array<{image_id:number, txn_id:number}>}
  */
 function linkImagesToTxns({ ledgerId, imageIds = [], txnIds = [], aiStatus = 'linked' }) {
@@ -160,30 +166,72 @@ function linkImagesToTxns({ ledgerId, imageIds = [], txnIds = [], aiStatus = 'li
   const txns = txnIds.map(Number).filter(Boolean);
   if (!ids.length || !txns.length) return [];
   const pairs = [];
+  const ledger = Number(ledgerId);
+
   ids.forEach((aid, i) => {
-    const target = txns.length === ids.length ? txns[i] : txns[0];
+    // 这张图要关联哪些明细
+    const targets = txns.length === ids.length
+      ? [txns[i]]
+      : (ids.length < txns.length ? txns.slice() : [txns[Math.min(i, txns.length - 1)]]);
+    for (const tid of targets) {
+      run(
+        'INSERT INTO attachment_txns (attachment_id, txn_id, created_at) VALUES (?,?,?) ON CONFLICT DO NOTHING',
+        aid, tid, nowStr()
+      );
+      pairs.push({ image_id: aid, txn_id: tid });
+    }
+    // 主关联 = 第一笔
     run(
       'UPDATE attachments SET txn_id = ?, ai_status = ? WHERE id = ? AND ledger_id = ?',
-      target, aiStatus, aid, Number(ledgerId)
+      targets[0], aiStatus, aid, ledger
     );
-    pairs.push({ image_id: aid, txn_id: target });
   });
   return pairs;
 }
 
-/** 批量查附件（按 txn_id 归组），供列表页显示「有几张图」 */
+/** 把附件与交易的关联彻底解绑（删交易时调用） */
+function unlinkTxns(txnIds = []) {
+  const ids = txnIds.map(Number).filter(Boolean);
+  if (!ids.length) return;
+  run(
+    `DELETE FROM attachment_txns WHERE txn_id IN (${ids.map(() => '?').join(',')})`,
+    ...ids
+  );
+  // 旧的主关联列也要清，避免残留
+  run(
+    `UPDATE attachments SET txn_id = NULL WHERE txn_id IN (${ids.map(() => '?').join(',')})`,
+    ...ids
+  );
+}
+
+/**
+ * 批量查附件（按 txn_id 归组），供列表页显示「有几张图」。
+ * 走 attachment_txns 多对多表；老数据只写了 attachments.txn_id，用 LEFT JOIN 兜底。
+ */
 function listByTxnIds(txnIds = []) {
   const ids = txnIds.map(Number).filter(Boolean);
   const map = new Map();
   if (!ids.length) return map;
+  const ph = ids.map(() => '?').join(',');
   const rows = all(
-    `SELECT id, txn_id, file_name, rel_path, mime, size, ai_status, created_at
-     FROM attachments WHERE txn_id IN (${ids.map(() => '?').join(',')}) ORDER BY id`,
-    ...ids
+    `SELECT a.id, a.txn_id, a.file_name, a.rel_path, a.mime, a.size, a.ai_status, a.created_at,
+            COALESCE(x.txn_id, a.txn_id) AS link_txn_id
+     FROM attachment_txns x
+     JOIN attachments a ON a.id = x.attachment_id
+     WHERE x.txn_id IN (${ph})
+     UNION
+     SELECT a.id, a.txn_id, a.file_name, a.rel_path, a.mime, a.size, a.ai_status, a.created_at,
+            a.txn_id AS link_txn_id
+     FROM attachments a
+     WHERE a.txn_id IN (${ph}) AND NOT EXISTS (
+       SELECT 1 FROM attachment_txns x WHERE x.attachment_id = a.id AND x.txn_id = a.txn_id
+     )
+     ORDER BY id`,
+    ...ids, ...ids
   );
   for (const r of rows) {
     r.url = webUrl(r.rel_path);
-    const k = Number(r.txn_id);
+    const k = Number(r.link_txn_id);
     if (!map.has(k)) map.set(k, []);
     map.get(k).push(r);
   }
@@ -192,11 +240,24 @@ function listByTxnIds(txnIds = []) {
 
 /** 单笔交易的附件列表 */
 function listByTxn(txnId) {
-  return all(
-    `SELECT id, txn_id, file_name, rel_path, mime, size, ai_status, created_at
-     FROM attachments WHERE txn_id = ? ORDER BY id`,
-    Number(txnId)
-  ).map((r) => ({ ...r, url: webUrl(r.rel_path) }));
+  const id = Number(txnId);
+  const rows = all(
+    `SELECT a.id, a.txn_id, a.file_name, a.rel_path, a.mime, a.size, a.ai_status, a.created_at,
+            COALESCE(x.txn_id, a.txn_id) AS link_txn_id
+     FROM attachment_txns x
+     JOIN attachments a ON a.id = x.attachment_id
+     WHERE x.txn_id = ?
+     UNION
+     SELECT a.id, a.txn_id, a.file_name, a.rel_path, a.mime, a.size, a.ai_status, a.created_at,
+            a.txn_id AS link_txn_id
+     FROM attachments a
+     WHERE a.txn_id = ? AND NOT EXISTS (
+       SELECT 1 FROM attachment_txns x WHERE x.attachment_id = a.id AND x.txn_id = a.txn_id
+     )
+     ORDER BY id`,
+    id, id
+  );
+  return rows.map((r) => ({ ...r, url: webUrl(r.rel_path) }));
 }
 
 /** { txnId: count } —— 轻量，只数数量 */
@@ -204,10 +265,17 @@ function countByTxnIds(txnIds = []) {
   const ids = txnIds.map(Number).filter(Boolean);
   const map = new Map();
   if (!ids.length) return map;
+  const ph = ids.map(() => '?').join(',');
   const rows = all(
-    `SELECT txn_id, COUNT(*) AS c FROM attachments
-     WHERE txn_id IN (${ids.map(() => '?').join(',')}) GROUP BY txn_id`,
-    ...ids
+    `SELECT txn_id, COUNT(*) AS c FROM (
+       SELECT x.txn_id FROM attachment_txns x WHERE x.txn_id IN (${ph})
+       UNION
+       SELECT a.txn_id FROM attachments a
+       WHERE a.txn_id IN (${ph}) AND NOT EXISTS (
+         SELECT 1 FROM attachment_txns x WHERE x.attachment_id = a.id AND x.txn_id = a.txn_id
+       )
+     ) t GROUP BY txn_id`,
+    ...ids, ...ids
   );
   for (const r of rows) map.set(Number(r.txn_id), Number(r.c));
   return map;
@@ -246,11 +314,12 @@ function safeMime(mime) {
   return MIME_EXT[m] ? m : 'application/octet-stream';
 }
 
-/** 删除附件：先删文件再删行 */
+/** 删除附件：先删文件再删行（连同多对多关联） */
 async function removeById(ledgerId, id) {
   const row = get('SELECT * FROM attachments WHERE id = ? AND ledger_id = ?', Number(id), Number(ledgerId));
   if (!row) return false;
   try { await storage.del(row.rel_path); } catch { /* 文件可能已被手工删除 */ }
+  run('DELETE FROM attachment_txns WHERE attachment_id = ?', row.id);
   run('DELETE FROM attachments WHERE id = ?', row.id);
   return true;
 }
@@ -259,7 +328,7 @@ module.exports = {
   MIME_EXT, MAX_IMAGE_BYTES, MAX_IMAGES,
   webUrl, parseDataUrl, safeMime,
   contentHash, findReusable, readDataUrl,
-  saveDataUrlImage, linkImagesToTxns,
+  saveDataUrlImage, linkImagesToTxns, unlinkTxns,
   listByTxnIds, listByTxn, countByTxnIds, attachCounts,
   getById, openFile, removeById,
 };
